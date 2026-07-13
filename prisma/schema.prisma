@@ -1,0 +1,322 @@
+// ── Enums ──────────────────────────────────────────────────────────────────────
+
+enum SalesType {
+  Full
+  Half
+  Quarter
+  Piece
+  Kg
+  Box
+  Set
+}
+
+enum ProductStatus {
+  Available
+  OutOfStock
+  LowStock
+  Discontinued
+}
+
+enum InvoiceStatus {
+  paid
+  pending
+  overdue
+  cancelled
+}
+
+enum PaymentMethod {
+  cash
+  card
+  bank_transfer
+  credit
+}
+
+enum DiscountType {
+  percentage
+  fixed
+  none
+}
+
+enum CustomerType {
+  regular
+  wholesale
+  credit
+}
+
+enum SupplierPaymentType {
+  cash
+  credit
+}
+
+enum UserRole {
+  ADMIN
+  CASHIER
+  STAFF
+}
+
+// ── Generator & Datasource ──────────────────────────────────────────────────────
+
+generator client {
+  provider    = "prisma-client-js"
+  engineType  = "library"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ── Models ──────────────────────────────────────────────────────────────────────
+
+/// Authentication user for the admin panel
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  username  String?  @unique
+  email     String?  @unique
+  phone     String?
+  password  String   @default("")
+  role      UserRole @default(STAFF)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("users")
+}
+
+/// Product category — derived dynamically from Product.productCategory
+model Category {
+  id                 String             @id @default(uuid())
+  name               String             @unique
+  nameSinhala        String?                         // Sinhala name (unified mapping)
+  icon               String?
+  description        String?            @db.Text
+  parentId           String?
+  usageCount         Int                @default(0)
+  sortOrder          Int                @default(0)  // Custom display ordering
+  showInQuickInvoice Boolean            @default(true) // Toggle for checkout visibility
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  parent             Category?          @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children           Category[]         @relation("CategoryHierarchy")
+  products           Product[]
+
+  @@index([parentId])
+  @@index([sortOrder])
+  @@map("categories")
+}
+
+/// MASTER PRODUCT SCHEMA — maps 1:1 to frontend `InventoryProduct` interface
+/// This is the primary table for the 1461+ imported inventory items.
+/// Stores flat, denormalized records with bilingual (Sinhala) support.
+model Product {
+  id              String        @id @default(uuid())
+  searchKey       String                        // Primary search field (e.g. "ACL BOX 3x3x2/4")
+  name            String                        // Product name (English)
+  nameSinhala     String?                       // Product name (Sinhala) — unified mapping
+  nameSi          String?                       // Legacy Sinhala name (kept for backward compat)
+  productCategory String                        // Category name string (e.g. "ACL කේබල්")
+  categoryId      String?
+  category        Category?     @relation(fields: [categoryId], references: [id])
+  categorySi      String?                       // Sinhala category name
+  barcode         String?                       // Physical barcode or fallback LHD-xxxxxxx
+  cost            Decimal       @default(0) @db.Decimal(12, 2)
+  lastPrice       Decimal       @default(0) @db.Decimal(12, 2)
+  salesPrice      Decimal       @default(0) @db.Decimal(12, 2)
+  displayPrice    Decimal       @default(0) @db.Decimal(12, 2)
+  storeQty        Int           @default(0)
+  salesType       String        @default("Piece")
+  status          ProductStatus @default(Available)
+  isDeleted       Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  invoiceItems    InvoiceItem[]
+
+  @@index([searchKey])
+  @@index([barcode])
+  @@index([productCategory])
+  @@index([categoryId])
+  @@index([status])
+  @@index([storeQty])
+  @@map("products")
+}
+
+/// Customer — compact model matching frontend CustomerFormModal inputs
+/// Stores bilingual (Sinhala) names and tracks credit/loan balances.
+model Customer {
+  id               String         @id @default(uuid())
+  name             String
+  nameSi           String?                        // Sinhala name
+  nic              String?         @unique         // NIC number (unique, indexed)
+  phone            String
+  email            String?                         // Nullable per compact form
+  address          String?        @db.Text
+  customerType     CustomerType    @default(regular)
+  loanBalance      Decimal        @default(0) @db.Decimal(12, 2)
+  creditLimit      Decimal        @default(50000.00) @db.Decimal(12, 2)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  invoices         Invoice[]
+  creditHistory    CreditTransaction[]
+
+  @@index([phone])
+  @@index([nic])
+  @@index([customerType])
+  @@map("customers")
+}
+
+/// Supplier (matches frontend `Supplier` interface)
+model Supplier {
+  id              String              @id @default(uuid())
+  name            String
+  contactPerson   String              @default("")
+  email           String?
+  phone           String
+  address         String?             @db.Text
+  brands          String?                            // JSON array
+  categories      String?                            // JSON array
+  paymentTerms    String?
+  isActive        Boolean             @default(true)
+  paymentType     SupplierPaymentType @default(cash)
+  creditBalance   Decimal             @default(0) @db.Decimal(12, 2)
+  creditLimit     Decimal?            @db.Decimal(12, 2)
+  creditDueDate   DateTime?
+  lastPaymentDate DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  deliveries      SupplierDelivery[]
+
+  @@index([name])
+  @@map("suppliers")
+}
+
+/// Supplier delivery record (matches frontend `SupplierDelivery` interface)
+model SupplierDelivery {
+  id            String   @id @default(uuid())
+  supplierId    String
+  supplier      Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  productId     String
+  productName   String
+  quantity      Int
+  unitPrice     Decimal  @db.Decimal(12, 2)
+  totalAmount   Decimal  @db.Decimal(12, 2)
+  deliveryDate  DateTime
+  invoiceNumber String?
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  @@index([supplierId])
+  @@index([deliveryDate])
+  @@map("supplier_deliveries")
+}
+
+/// Invoice (matches frontend `Invoice` interface)
+model Invoice {
+  id              String         @id @default(uuid())
+  invoiceNumber   String         @unique
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id])
+  cashierName     String?                       // Authenticated cashier/staff name for print layout
+  customerName    String                        // Denormalized for fast display
+  items           InvoiceItem[]
+  creditTransactions CreditTransaction[]
+  subtotal        Decimal        @db.Decimal(12, 2)
+  discount        Decimal        @default(0) @db.Decimal(12, 2)
+  discountType    DiscountType   @default(none)
+  discountValue   Decimal?       @db.Decimal(12, 2)
+  enableTax       Boolean        @default(false)
+  taxRate         Decimal?       @db.Decimal(5, 2)
+  tax             Decimal        @default(0) @db.Decimal(12, 2)
+  total           Decimal        @db.Decimal(12, 2)
+  receivedAmount  Decimal?       @db.Decimal(12, 2)
+  changeAmount    Decimal?       @db.Decimal(12, 2)
+  issueDate       DateTime       @default(now())
+  dueDate         DateTime
+  status          InvoiceStatus  @default(pending)
+  paymentMethod   PaymentMethod  @default(cash)
+  notes           String?        @db.Text
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([invoiceNumber])
+  @@index([customerId])
+  @@index([status])
+  @@index([issueDate])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+/// Invoice line item (matches frontend `InvoiceItem` interface)
+model InvoiceItem {
+  id              String   @id @default(uuid())
+  invoiceId       String
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId       String?
+  product         Product? @relation(fields: [productId], references: [id])
+  productName     String
+  productNameSi   String?
+  variantId       String?
+  size            String?
+  quantity        Float
+  unitPrice       Decimal  @db.Decimal(12, 2)
+  originalPrice   Decimal? @db.Decimal(12, 2)
+  discount        Decimal? @db.Decimal(12, 2)
+  total           Decimal  @db.Decimal(12, 2)
+
+  @@index([invoiceId])
+  @@index([productId])
+  @@map("invoice_items")
+}
+
+/// Credit transaction log — tracks all credit movements for customers
+/// When an invoice is created with 'credit' payment or 'pending' status,
+/// a CreditTransaction record is created tracking the change in loanBalance.
+/// When the invoice is paid, a reversal transaction is recorded.
+model CreditTransaction {
+  id          String      @id @default(uuid())
+  customerId  String
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  invoiceId   String?
+  invoice     Invoice?    @relation(fields: [invoiceId], references: [id])
+  type        String                          // 'loan_issued' | 'payment_received' | 'adjustment'
+  amount      Decimal     @db.Decimal(12, 2)  // Positive = loan increase, Negative = loan decrease
+  prevBalance Decimal     @db.Decimal(12, 2)  // Loan balance BEFORE this transaction
+  newBalance  Decimal     @db.Decimal(12, 2)  // Loan balance AFTER this transaction
+  description String?     @db.Text
+  createdAt   DateTime    @default(now())
+
+  @@index([customerId])
+  @@index([invoiceId])
+  @@index([createdAt])
+  @@map("credit_transactions")
+}
+
+/// Financial transaction log (matches frontend `FinancialTransaction` interface)
+model FinancialTransaction {
+  id            String        @id @default(uuid())
+  date          DateTime
+  type          String                        // 'revenue' | 'expense'
+  category      String
+  description   String        @db.Text
+  amount        Decimal       @db.Decimal(12, 2)
+  paymentMethod PaymentMethod @default(cash)
+  invoiceId     String?
+  createdAt     DateTime      @default(now())
+
+  @@index([date])
+  @@index([type])
+  @@index([category])
+  @@map("financial_transactions")
+}
+
+/// Invoice number counter — atomically generates sequential invoice numbers
+model InvoiceCounter {
+  id      Int    @id @default(1)  // Singleton row, always id=1
+  prefix  String @default("")
+  seq     Int    @default(0)
+  year    Int    @default(2026)
+
+  @@map("invoice_counters")
+}
