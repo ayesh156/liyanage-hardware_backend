@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/appError.js';
+import { Prisma } from '@prisma/client';
 import { colomboNow, colomboMySQLDateTime, colomboDate } from '../utils/dateUtils.js';
 import {
   CreateProductInput,
@@ -42,6 +43,24 @@ function deriveStatus(storeQty: number): string {
   return 'Available';
 }
 
+function optionalStringOrNull(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return String(value);
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function requiredString(value: unknown): string {
+  if (typeof value !== 'string') return String(value ?? '').trim();
+  return value.trim();
+}
+
+function numberOrDefault(value: unknown, fallback = 0): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const asNumber = Number(value);
+  return Number.isFinite(asNumber) ? asNumber : fallback;
+}
+
 /**
  * ── CATEGORY ID RESOLUTION ────────────────────────────────────────────────
  * CRITICAL FIX: When frontend sends only productCategory (string name) without
@@ -61,9 +80,9 @@ async function resolveCategoryId(categoryName: string): Promise<{ categoryId: st
   // Normalize incoming name but preserve original trimmed value for storage
   const trimmedName = categoryName.trim();
 
-  // Attempt a case-insensitive lookup by name first
+  // MySQL/MariaDB collation handles case-insensitive matching by default
   const existing = await prisma.category.findFirst({
-    where: { name: { equals: trimmedName, mode: 'insensitive' } },
+    where: { name: trimmedName },
     select: { id: true, name: true },
   });
 
@@ -211,10 +230,10 @@ export class ProductService {
     if (search) {
       const q = search.trim();
       where.OR = [
-        { searchKey: { contains: q, mode: 'insensitive' } },
-        { name: { contains: q, mode: 'insensitive' } },
-        { productCategory: { contains: q, mode: 'insensitive' } },
-        { barcode: { contains: q, mode: 'insensitive' } },
+        { searchKey: { contains: q } },
+        { name: { contains: q } },
+        { productCategory: { contains: q } },
+        { barcode: { contains: q } },
       ];
     }
 
@@ -309,45 +328,83 @@ export class ProductService {
    * so that Prisma's _count.products aggregate returns accurate results.
    */
   static async create(input: CreateProductInput): Promise<ProductDTO> {
+    const payload = (input ?? {}) as unknown as Record<string, unknown>;
+
+    const searchKey = requiredString(payload.searchKey ?? payload.sku);
+    const name = requiredString(payload.name ?? payload.productName);
+    const productCategory = requiredString(payload.productCategory ?? payload.category ?? payload.categoryName);
+
+    const nameSinhala = optionalStringOrNull(payload.nameSinhala ?? payload.nameSi);
+    const nameSi = optionalStringOrNull(payload.nameSi ?? payload.nameSinhala);
+    const categorySi = optionalStringOrNull(payload.categorySi ?? payload.categorySinhala);
+    const barcode = optionalStringOrNull(payload.barcode);
+    const rawCategoryId = optionalStringOrNull(payload.categoryId);
+
+    const cost = numberOrDefault(payload.cost, 0);
+    const lastPrice = numberOrDefault(payload.lastPrice, 0);
+    const salesPrice = numberOrDefault(payload.salesPrice, 0);
+    const displayPrice = numberOrDefault(payload.displayPrice, 0);
+    const storeQty = Math.max(0, Math.trunc(numberOrDefault(payload.storeQty, 0)));
+    const salesType = requiredString(payload.salesType || 'Piece') || 'Piece';
+    const statusInput = requiredString(payload.status);
+
     // Validate required fields
-    if (!input.searchKey || !input.name || !input.productCategory) {
+    if (!searchKey || !name || !productCategory) {
       throw new AppError('searchKey, name, and productCategory are required', 400);
     }
 
     // Auto-derive status from storeQty if not provided
-    const status = input.status || deriveStatus(input.storeQty);
+    const status = statusInput || deriveStatus(storeQty);
     const dbStatus = mapStatusToDb(status);
     const now = colomboNow();
 
     // 🚀 CRITICAL FIX: Resolve productCategory string → categoryId UUID FK
     const resolved = await ensureCategoryId({
-      productCategory: input.productCategory,
-      categoryId: input.categoryId ?? null,
+      productCategory,
+      categoryId: rawCategoryId ?? null,
     });
 
-    const item = await prisma.product.create({
-      data: {
-        searchKey: input.searchKey,
-        name: input.name,
-        nameSinhala: input.nameSinhala ?? null,
-        nameSi: input.nameSi ?? null,
-        productCategory: resolved.productCategory,
-        categoryId: resolved.categoryId,
-        categorySi: input.categorySi ?? null,
-        barcode: input.barcode ?? null,
-        cost: input.cost ?? 0,
-        lastPrice: input.lastPrice ?? 0,
-        salesPrice: input.salesPrice ?? 0,
-        displayPrice: input.displayPrice ?? 0,
-        storeQty: input.storeQty ?? 0,
-        salesType: input.salesType ?? 'Piece',
-        status: dbStatus as any,
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
+    const createData = {
+      searchKey,
+      name,
+      nameSinhala,
+      nameSi,
+      productCategory: resolved.productCategory,
+      categoryId: resolved.categoryId,
+      categorySi,
+      barcode,
+      cost,
+      lastPrice,
+      salesPrice,
+      displayPrice,
+      storeQty,
+      salesType,
+      status: dbStatus as any,
+      createdAt: now,
+      updatedAt: now,
+    };
 
-    return toDTO(item);
+    try {
+      const item = await prisma.product.create({ data: createData });
+      return toDTO(item);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientValidationError) {
+        console.error('[ProductService.create] Prisma validation error:', err.message);
+        console.error('[ProductService.create] Payload snapshot:', {
+          searchKey,
+          name,
+          productCategory,
+          categoryId: resolved.categoryId,
+          cost,
+          lastPrice,
+          salesPrice,
+          displayPrice,
+          storeQty,
+          salesType,
+        });
+      }
+      throw err;
+    }
   }
 
   /**
