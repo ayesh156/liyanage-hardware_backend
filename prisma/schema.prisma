@@ -89,18 +89,14 @@ model Category {
   nameSinhala        String?                         // Sinhala name (unified mapping)
   icon               String?
   description        String?            @db.Text
-  parentId           String?
   usageCount         Int                @default(0)
   sortOrder          Int                @default(0)  // Custom display ordering
   showInQuickInvoice Boolean            @default(true) // Toggle for checkout visibility
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
-  parent             Category?          @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children           Category[]         @relation("CategoryHierarchy")
   products           Product[]
 
-  @@index([parentId])
   @@index([sortOrder])
   @@map("categories")
 }
