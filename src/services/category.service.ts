@@ -169,31 +169,25 @@ export class CategoryService {
 
   /**
    * DELETE /api/categories/:id
-   * Safeguard: prevents deletion if products are assigned to this category.
+   * Safely unassigns dependent products (sets categoryId and categorySi to null)
+   * before deleting the category record.
    */
   static async delete(id: string): Promise<void> {
     const existing = await prisma.category.findUnique({
       where: { id },
-      include: {
-        _count: {
-          select: { products: true },
-        },
-      },
     });
 
     if (!existing) {
       throw new AppError('Category not found', 404);
     }
 
-    // 🚨 Relational Integrity Safeguard
-    const productCount = (existing as any)._count.products;
-    if (productCount > 0) {
-      throw new AppError(
-        `Cannot delete category "${existing.name}": ${productCount} product(s) are still assigned to it. Remove or reassign the products first.`,
-        409,
-      );
-    }
+    // Step A: Safely unassign products linked to this category
+    await prisma.product.updateMany({
+      where: { categoryId: id },
+      data: { categoryId: null, categorySi: null },
+    });
 
+    // Step B: Delete the standalone category record
     await prisma.category.delete({ where: { id } });
   }
 
