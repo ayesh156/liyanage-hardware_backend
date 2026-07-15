@@ -223,25 +223,13 @@ async function resolveInvoiceIdentifier(identifier: string) {
 }
 
 // ── Helper: Build invoice item creation data with FK-safe productId resolution ──
+// The calling code is responsible for pre-aligning item.productId against
+// actual database rows (e.g. via alignProductIds). This function trusts
+// that the productId has already been validated or set to null.
 function buildItemCreateData(item: any, invoiceId: string) {
-  // Determine the incoming product ID key dynamically (frontend may use
-  // `productId` or `id` as the property name for the database identifier).
-  const rawProductId = item.productId || (item as any).id;
-
-  // A product is ONLY considered custom if it lacks any real database
-  // identifier, OR if the identifier is an explicit temporary client-side
-  // string pattern like "custom-…" or "quick-add".
-  // Non-UUID identifiers (e.g. "p-12X12-GI-BOX-0" from seed data) are
-  // perfectly valid catalog references and MUST NOT be nulled out.
-  const isCustomItem =
-    !rawProductId ||
-    String(rawProductId).startsWith('custom') ||
-    String(rawProductId).trim() === '' ||
-    String(rawProductId) === 'quick-add';
-
   return {
     invoiceId,
-    productId: isCustomItem ? null : String(rawProductId),
+    productId: item.productId ?? null,
     productName: item.productName,
     productNameSi: item.productNameSi ?? null,
     quantity: parseFloat(String(item.quantity || 0)),
@@ -250,6 +238,94 @@ function buildItemCreateData(item: any, invoiceId: string) {
     discount: item.discount ?? null,
     total: item.total,
   };
+}
+
+// ── Helper: Resolve and ensure a valid customerId exists ──
+// If the incoming customerId is missing or does not match a real row,
+// override to 'default-customer'. Then upsert the default customer row
+// to guarantee it exists for the FK constraint.
+async function resolveCustomerId(
+  incomingCustomerId: string | undefined,
+  txOrPrisma: any,
+): Promise<string> {
+  const candidateId = incomingCustomerId || 'default-customer';
+
+  if (candidateId && candidateId !== 'default-customer') {
+    const exists = await txOrPrisma.customer.findUnique({
+      where: { id: candidateId },
+      select: { id: true },
+    });
+    if (exists) return candidateId;
+  }
+
+  // Upsert the default-customer row so the FK never fails
+  await txOrPrisma.customer.upsert({
+    where: { id: 'default-customer' },
+    update: {},
+    create: {
+      id: 'default-customer',
+      name: 'Walk-in Customer',
+      phone: '0000000000',
+    },
+  });
+
+  return 'default-customer';
+}
+
+// ── Helper: Align productIds against actual database rows ──
+// For each item, checks if productId exists in the products table.
+// If not found, performs a fallback case-insensitive lookup by productName.
+// If still not found, sets productId to null to prevent FK constraint crash.
+async function alignProductIds(tx: any, items: any[]): Promise<any[]> {
+  const aligned: any[] = [];
+
+  for (const item of items) {
+    if (!item || typeof item !== 'object') {
+      aligned.push(item);
+      continue;
+    }
+
+    const rawProductId = item.productId || (item as any).id;
+    const isCustomItem =
+      !rawProductId ||
+      String(rawProductId).startsWith('custom') ||
+      String(rawProductId).trim() === '' ||
+      String(rawProductId) === 'quick-add';
+
+    if (isCustomItem) {
+      aligned.push({ ...item, productId: null });
+      continue;
+    }
+
+    // Strategy 1: Exact productId match
+    const dbProduct = await tx.product.findUnique({
+      where: { id: String(rawProductId) },
+      select: { id: true },
+    });
+
+    if (dbProduct) {
+      aligned.push({ ...item, productId: dbProduct.id });
+      continue;
+    }
+
+    // Strategy 2: Fallback — case-insensitive lookup by product name
+    // MySQL with CI collation makes 'equals' case-insensitive natively.
+    if (item.productName) {
+      const dbProductByName = await tx.product.findFirst({
+        where: { name: { equals: item.productName } },
+        select: { id: true },
+      });
+      if (dbProductByName) {
+        aligned.push({ ...item, productId: dbProductByName.id });
+        continue;
+      }
+    }
+
+    // Strategy 3: Item not found anywhere — null the productId to prevent FK crash
+    aligned.push({ ...item, productId: null });
+  }
+
+  return aligned;
 }
 
 async function syncInvoiceItems(tx: any, invoiceId: string, incomingItems: any[]) {
@@ -564,22 +640,30 @@ export class InvoiceService {
     }
     const status = calculatedStatus;
 
+    // ══════════════════════════════════════════════════════════════════
+    // CUSTOMER INTEGRITY SHIELD — validate incoming customerId
+    // ══════════════════════════════════════════════════════════════════
+    // If the incoming customerId is missing or doesn't exist in the DB,
+    // override to 'default-customer' and upsert the row to guarantee
+    // the FK constraint never fails.
+    const safeCustomerId = await resolveCustomerId(input.customerId, prisma);
+
     // Determine if credit/debt should be applied
     const appliesCredit = shouldApplyCredit({
       paymentMethod,
       receivedAmount: input.receivedAmount,
       total: input.total,
-      customerId: input.customerId,
+      customerId: safeCustomerId,
     });
     const remainingCreditDebt = appliesCredit
       ? calcRemainingCreditDebt(input.total, input.receivedAmount)
       : 0;
 
-    // Resolve customer name
+    // Resolve customer name from the resolved customerId
     let customerName = input.customerName || '';
-    if (input.customerId && !customerName) {
+    if (safeCustomerId && !customerName) {
       const customer = await prisma.customer.findUnique({
-        where: { id: input.customerId },
+        where: { id: safeCustomerId },
         select: { name: true },
       });
       if (customer) {
@@ -599,11 +683,15 @@ export class InvoiceService {
 
     // Execute everything in a $transaction for atomicity
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Create the invoice
+      // 0. Align productIds against actual database rows before creating items
+      //    This eliminates stale UUID keys that cause FK constraint failures.
+      const alignedItems = await alignProductIds(tx, input.items);
+
+      // 1. Create the invoice — use safeCustomerId to guarantee FK integrity
       const invoice = await tx.invoice.create({
         data: {
           invoiceNumber,
-          customerId: input.customerId || '',
+          customerId: safeCustomerId,
           cashierName: String(input.currentUser?.name || 'Admin User'),
           customerName: customerName || 'Walk-in Customer',
           subtotal: input.subtotal || input.total,
@@ -626,54 +714,48 @@ export class InvoiceService {
         },
       });
 
-      // 2. Create invoice items
-      for (const item of input.items) {
+      // 2. Create invoice items using the aligned productIds
+      for (const item of alignedItems) {
         await tx.invoiceItem.create({
           data: buildItemCreateData(item, invoice.id) as any,
         });
       }
 
       // 2.b Strict Stock Reduction Engine — decrement product storeQty atomically
-      // For each incoming item that references a real product id, decrement
-      // the product's `storeQty` inside the same transaction. Custom/quick-add
-      // items without a real product id are skipped. The backend accepts both
-      // UUID-like IDs and legacy seeded catalog keys, so we validate against the
-      // actual database row before reducing stock.
-      for (const item of input.items) {
-        const rawProductId = item.productId || (item as any).id;
+      // Uses the already-aligned items so productId is guaranteed to reference
+      // an actual database row, or is null (for custom/quick-add items).
+      for (const item of alignedItems) {
+        const effectiveProductId = item.productId;
         const normalizedQuantity = Number(item.quantity) || 0;
-        const isCustomItem =
-          !rawProductId ||
-          String(rawProductId).startsWith('custom') ||
-          String(rawProductId).trim() === '' ||
-          String(rawProductId) === 'quick-add';
 
-        if (isCustomItem || normalizedQuantity <= 0) continue;
+        // Skip items without a valid resolved productId or negative/zero qty
+        if (!effectiveProductId || normalizedQuantity <= 0) continue;
 
         try {
           const existingProduct = await tx.product.findUnique({
-            where: { id: String(rawProductId) },
+            where: { id: effectiveProductId },
             select: { id: true, storeQty: true },
           });
 
           if (!existingProduct) continue;
 
           await tx.product.update({
-            where: { id: String(rawProductId) },
+            where: { id: effectiveProductId },
             data: {
               storeQty: Math.max(0, existingProduct.storeQty - normalizedQuantity),
             },
           });
         } catch (err) {
-          logPrismaFailure(err, `stock decrement for product ${String(rawProductId)}`);
+          logPrismaFailure(err, `stock decrement for product ${effectiveProductId}`);
           throw err;
         }
       }
 
       // 3. Apply credit/debt to customer loan balance if applicable
-      if (appliesCredit && input.customerId && remainingCreditDebt > 0) {
+      //    Uses safeCustomerId instead of raw input.customerId
+      if (appliesCredit && safeCustomerId && remainingCreditDebt > 0) {
         await applyCreditTransaction(tx, {
-          customerId: input.customerId,
+          customerId: safeCustomerId,
           invoiceId: invoice.id,
           invoiceNumber,
           amount: remainingCreditDebt,
