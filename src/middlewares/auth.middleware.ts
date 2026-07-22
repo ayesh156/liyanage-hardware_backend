@@ -47,19 +47,19 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       return;
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number; role: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number; role: string; username?: string };
 
-    // Resolve the user's name and username from the database
+    // Resolve the user's name from the database (username is now in JWT payload)
     const userRecord = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { name: true, username: true },
+      select: { name: true },
     });
 
     req.user = {
       userId: decoded.userId,
       role: decoded.role,
-      name: userRecord?.name || 'Admin User',
-      username: userRecord?.username || undefined,
+      name: userRecord?.name || 'Unknown',
+      username: decoded.username || undefined,
     };
     next();
   } catch (error) {

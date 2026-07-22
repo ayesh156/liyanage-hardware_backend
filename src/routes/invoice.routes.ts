@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { InvoiceController } from '../controllers/invoice.controller.js';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
 
 const router = Router();
 
@@ -18,12 +19,12 @@ const router = Router();
 
 // ── List / Create ──
 router.get('/', InvoiceController.list);
-router.post('/', InvoiceController.create);
+router.post('/', authMiddleware, InvoiceController.create);
 
 // ── Detail / Update / Delete ──
 router.get('/:id', InvoiceController.getById);
-router.put('/:id', InvoiceController.update);
-router.patch('/:id', InvoiceController.patch);
-router.delete('/:id', InvoiceController.delete);
+router.put('/:id', authMiddleware, InvoiceController.update);
+router.patch('/:id', authMiddleware, InvoiceController.patch);
+router.delete('/:id', authMiddleware, InvoiceController.delete);
 
 export default router;

@@ -84,7 +84,7 @@ model User {
 
 /// Product category — derived dynamically from Product.productCategory
 model Category {
-  id                 String             @id @default(uuid())
+  id                 String             @id
   name               String             @unique
   nameSinhala        String?                         // Sinhala name (unified mapping)
   icon               String?
@@ -140,7 +140,7 @@ model Product {
 /// Customer — compact model matching frontend CustomerFormModal inputs
 /// Stores bilingual (Sinhala) names and tracks credit/loan balances.
 model Customer {
-  id               String         @id @default(uuid())
+  id               String         @id
   name             String
   nameSi           String?                        // Sinhala name
   nic              String?         @unique         // NIC number (unique, indexed)

@@ -78,7 +78,7 @@ export const me = async (req: Request, res: Response, next: NextFunction) => {
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, name: true, email: true, role: true, active: true },
+      select: { id: true, name: true, email: true, role: true, username: true, active: true },
     });
 
     if (!user || !user.active) {
@@ -93,6 +93,7 @@ export const me = async (req: Request, res: Response, next: NextFunction) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        username: user.username,
       },
     });
   } catch (error: any) {

@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/appError.js';
+import { generateSequentialId } from '../utils/idGenerator.js';
 import {
   CategoryDTO,
   CreateCategoryInput,
@@ -76,8 +77,11 @@ export class CategoryService {
 
   /**
    * POST /api/categories
+   * Generates a role-prefixed sequential 6-digit ID (e.g. cata-000001, catc1-000001).
    */
-  static async create(input: CreateCategoryInput): Promise<CategoryDTO> {
+  static async create(
+    input: CreateCategoryInput & { currentUser?: { role?: string; username?: string } },
+  ): Promise<CategoryDTO> {
     if (!input.name || !input.name.trim()) {
       throw new AppError('Category name is required', 400);
     }
@@ -90,8 +94,12 @@ export class CategoryService {
       throw new AppError(`Category "${input.name}" already exists`, 409);
     }
 
+    // Generate sequential role-based ID
+    const id = await generateSequentialId('category', input.currentUser);
+
     const item = await prisma.category.create({
       data: {
+        id,
         name: input.name.trim(),
         nameSinhala: input.nameSinhala ?? null,
         icon: input.icon ?? null,

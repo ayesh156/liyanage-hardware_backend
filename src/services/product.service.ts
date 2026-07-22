@@ -11,6 +11,53 @@ import {
   ProductStatus as ProductStatusType,
 } from '../types/index.js';
 
+// ── User-Role-Based Sequential Product ID Generation ──
+// Thread-safe: each role/cashier generates IDs under their own unique prefix
+// space, so concurrent inserts from different users NEVER collide.
+//   ADMIN  → prefix "pda-"  → e.g. "pda-0001"
+//   CASHIER → prefix "pdc{N}-" where N = cashier number parsed from username
+//           → e.g. cashier1 → "pdc1-0042"
+// NOTE: The legacy "lhd-" prefix has been completely removed.
+async function generateProductId(currentUser?: { role?: string; username?: string }): Promise<string> {
+  console.log("[generateProductId] Generating Product ID for User:", currentUser);
+
+  let prefix = 'pda-'; // Default for Admin
+
+  if (currentUser) {
+    const username = (currentUser.username || '').toLowerCase();
+    const role = (currentUser.role || '').toUpperCase();
+
+    console.log(`[DEBUG] ID Gen - Role: "${role}", Username: "${username}"`);
+
+    if (role === 'CASHIER' || username.includes('cashier')) {
+      const match = username.match(/cashier(\d+)/i);
+      const cashierNum = match ? match[1] : '1';
+      prefix = `pdc${cashierNum}-`;
+    }
+  }
+
+  console.log(`[generateProductId] Determined prefix="${prefix}" for user:`, currentUser?.username);
+
+  // 2. Query DB for the highest existing sequential ID for this prefix
+  const lastRecord = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT id FROM products WHERE id LIKE '${prefix}%' ORDER BY id DESC LIMIT 1`
+  );
+
+  let nextNum = 1;
+  if (lastRecord && lastRecord.length > 0) {
+    const lastId = lastRecord[0].id;
+    const trailingDigits = lastId.replace(prefix, '');
+    const lastNum = parseInt(trailingDigits, 10);
+    if (!isNaN(lastNum)) {
+      nextNum = lastNum + 1;
+    }
+  }
+
+  // 3. Format with 4-digit zero-padding
+  const padded = String(nextNum).padStart(4, '0');
+  return `${prefix}${padded}`;
+}
+
 // ── Status Mapping ──
 
 // Maps between frontend display status (space-separated) and Prisma enum (PascalCase)
@@ -327,8 +374,12 @@ export class ProductService {
    * CRITICAL FIX: Auto-resolves productCategory string → categoryId UUID FK
    * so that Prisma's _count.products aggregate returns accurate results.
    */
-  static async create(input: CreateProductInput): Promise<ProductDTO> {
+  static async create(input: CreateProductInput & { currentUser?: { role?: string; username?: string } }): Promise<ProductDTO> {
     const payload = (input ?? {}) as unknown as Record<string, unknown>;
+    const currentUser = (input as any).currentUser;
+
+    // Generate the sequential product ID based on user role
+    const generatedId = await generateProductId(currentUser);
 
     const searchKey = requiredString(payload.searchKey ?? payload.sku);
     const name = requiredString(payload.name ?? payload.productName);
@@ -365,6 +416,7 @@ export class ProductService {
     });
 
     const createData = {
+      id: generatedId,
       searchKey,
       name,
       nameSinhala,

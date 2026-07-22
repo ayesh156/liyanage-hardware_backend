@@ -5,56 +5,49 @@ import { AppError } from '../utils/appError.js';
 import { colomboNow } from '../utils/dateUtils.js';
 import { InvoiceDTO, InvoiceItemDTO, PaginatedResult } from '../types/index.js';
 
-// ── Helper: Derive 2-character user prefix from authenticated user context ──
-// Dynamically compiles initials from the authenticated user's name or username.
-//   - If the user has a full name (e.g. "Kasun Perera") → "kp" (first letter of first + last name)
-//   - If the user has a single-word name or username (e.g. "cashier") → "cr" (first + last character)
-//   - Fallback: "an" (Admin User)
-function deriveUserPrefix(currentUser?: { name?: string; username?: string }): string {
-  const userNameString = String(currentUser?.name || currentUser?.username || 'Admin User').trim().toLowerCase();
-  const nameParts = userNameString.split(/\s+/);
+// ── User-Role-Based Sequential Invoice Number Generation ──
+// Each user role/cashier generates invoice numbers under their own unique
+// prefix space, making concurrent inserts from different users impossible
+// to collide.
+//   ADMIN  → prefix "inva-"  → e.g. "inva-000102"
+//   CASHIER → prefix "invc{N}-" where N = cashier number parsed from username
+//           → e.g. cashier1 → "invc1-000045"
+async function generateInvoiceNumber(currentUser?: { role?: string; username?: string }): Promise<string> {
+  console.log("[generateInvoiceNumber] Generating Invoice Number for User:", currentUser);
 
-  if (nameParts.length >= 2) {
-    return `${nameParts[0].charAt(0)}${nameParts[nameParts.length - 1].charAt(0)}`;
-  } else if (userNameString.length >= 2) {
-    return `${userNameString.charAt(0)}${userNameString.charAt(userNameString.length - 1)}`;
+  let prefix = 'inva-'; // Default for Admin
+
+  if (currentUser) {
+    const username = (currentUser.username || '').toLowerCase();
+    const role = (currentUser.role || '').toUpperCase();
+
+    console.log(`[DEBUG] Invoice ID Gen - Role: "${role}", Username: "${username}"`);
+
+    if (role === 'CASHIER' || username.includes('cashier')) {
+      const match = username.match(/cashier(\d+)/i);
+      const cashierNum = match ? match[1] : '1';
+      prefix = `invc${cashierNum}-`;
+    }
   }
-  return 'an';
-}
 
-// ── Helper: Generate collision-proof invoice number ──
-// Produces format: inv-{userPrefix}-XXXXXX where {userPrefix} is a 2-char user-
-// specific token, and XXXXXX is a 6-character high-resolution time-based code
-// ensuring absolute zero collision even across multiple devices.
-function generateInvoiceNumber(currentUser?: { name?: string; username?: string }): string {
-  const userPrefix = deriveUserPrefix(currentUser);
+  // 2. Query DB for the highest existing invoiceNumber for this prefix
+  const lastRecord = await prisma.$queryRawUnsafe<Array<{ invoiceNumber: string }>>(
+    `SELECT invoiceNumber FROM invoices WHERE invoiceNumber LIKE '${prefix}%' ORDER BY invoiceNumber DESC LIMIT 1`
+  );
 
-  // High-resolution timestamp: microseconds since epoch
-  const [seconds, nanoseconds] = process.hrtime();
-  const microseconds = Math.floor(nanoseconds / 1000);
-  
-  // Combined raw timestamp base
-  const raw = `${seconds}${String(microseconds).padStart(6, '0')}${Math.random().toString(36).substring(2, 8)}`;
-  
-  // Create a simple deterministic hash from the raw input
-  let hash = 0;
-  for (let i = 0; i < raw.length; i++) {
-    const char = raw.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0; // Convert to 32bit integer
+  let nextNum = 1;
+  if (lastRecord && lastRecord.length > 0) {
+    const lastInvoiceNo = lastRecord[0].invoiceNumber;
+    const trailingDigits = lastInvoiceNo.replace(prefix, '');
+    const lastNum = parseInt(trailingDigits, 10);
+    if (!isNaN(lastNum)) {
+      nextNum = lastNum + 1;
+    }
   }
-  
-  // Generate absolute hash string, then extract 6 chars
-  const absHash = Math.abs(hash).toString(36).toLowerCase();
-  
-  // Append microsecond-based suffix for extra entropy
-  const msEntropy = String(microseconds % 1679616).padStart(6, '0'); // 36^3 = 46656, 36^4 = 1679616
-  const msBase36 = Number(msEntropy.substring(0, 4)).toString(36).padStart(3, '0');
-  
-  // Build the 6-char code: take first 3 chars of hash + 3 chars of ms-base36
-  const code = `${absHash.substring(0, 3)}${msBase36.substring(0, 3)}`.toLowerCase();
-  
-  return `inv-${userPrefix}-${code}`;
+
+  // 3. Format with 6-digit zero-padding
+  const padded = String(nextNum).padStart(6, '0');
+  return `${prefix}${padded}`;
 }
 
 // ── DTO Mappers ──
@@ -609,7 +602,7 @@ export class InvoiceService {
       discount?: number;
       total: number;
     }>;
-    currentUser?: { name?: string; username?: string };
+    currentUser?: { name?: string; username?: string; role?: string };
   }): Promise<InvoiceDTO> {
     // Validate required fields
     if (!input.items || input.items.length === 0) {
@@ -671,8 +664,8 @@ export class InvoiceService {
       }
     }
 
-    // Generate invoice number with dynamic user prefix
-    const invoiceNumber = generateInvoiceNumber(input.currentUser);
+    // Generate invoice number with dynamic user prefix (sequential, role-based)
+    const invoiceNumber = await generateInvoiceNumber(input.currentUser as any);
 
     // Compute default values
     const now = colomboNow();

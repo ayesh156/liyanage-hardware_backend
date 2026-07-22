@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { ProductController } from '../controllers/product.controller.js';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
 import { AppError } from '../utils/appError.js';
 
 const router = Router();
@@ -48,7 +49,7 @@ function normalizeProductBody(req: Request, _res: Response, next: NextFunction):
 // ⚠️ IMPORTANT: Route ordering matters — specific routes BEFORE parameterized ones.
 
 // POST /api/products/reconcile-categories  — data integrity fix for legacy NULL categoryId rows
-router.post('/reconcile-categories', ProductController.reconcileCategories);
+router.post('/reconcile-categories', authMiddleware, ProductController.reconcileCategories);
 
 // GET /api/products/status-summary  — dashboard stats
 router.get('/status-summary', ProductController.statusSummary);
@@ -59,25 +60,25 @@ router.get('/barcode/:barcode', ProductController.getByBarcode);
 // GET /api/products   — paginated, filterable list
 router.get('/', ProductController.list);
 
-// POST /api/products  — create new product
-router.post('/', normalizeProductBody, ProductController.create);
+// POST /api/products  — create new product (authenticated)
+router.post('/', authMiddleware, normalizeProductBody, ProductController.create);
 
 // PATCH /api/products/:id/barcode  — inline barcode editing with uniqueness check
-router.patch('/:id/barcode', ProductController.updateBarcode);
+router.patch('/:id/barcode', authMiddleware, ProductController.updateBarcode);
 
 // PATCH /api/products/:id/stock  — dedicated stock adjustment
-router.patch('/:id/stock', ProductController.adjustStock);
+router.patch('/:id/stock', authMiddleware, ProductController.adjustStock);
 
 // GET /api/products/:id  — single product
 router.get('/:id', ProductController.getById);
 
-// PUT /api/products/:id  — update product
-router.put('/:id', normalizeProductBody, ProductController.update);
+// PUT /api/products/:id  — update product (authenticated)
+router.put('/:id', authMiddleware, normalizeProductBody, ProductController.update);
 
 // PATCH /api/products/:id  — partial update (inline cell editing)
-router.patch('/:id', normalizeProductBody, ProductController.patch);
+router.patch('/:id', authMiddleware, normalizeProductBody, ProductController.patch);
 
-// DELETE /api/products/:id — delete product
-router.delete('/:id', ProductController.delete);
+// DELETE /api/products/:id — delete product (authenticated)
+router.delete('/:id', authMiddleware, ProductController.delete);
 
 export default router;

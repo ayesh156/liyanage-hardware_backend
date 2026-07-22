@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { CategoryController } from '../controllers/category.controller.js';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
 
 const router = Router();
 
@@ -11,8 +12,8 @@ router.patch('/display-settings', CategoryController.bulkUpdateDisplay);
 // GET /api/categories — list all categories
 router.get('/', CategoryController.list);
 
-// POST /api/categories — create new category
-router.post('/', CategoryController.create);
+// POST /api/categories — create new category (requires auth for role-prefixed ID generation)
+router.post('/', authMiddleware, CategoryController.create);
 
 // GET /api/categories/:id — single category
 router.get('/:id', CategoryController.getById);

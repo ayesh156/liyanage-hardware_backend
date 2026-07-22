@@ -14,6 +14,7 @@ interface LoginResult {
     name: string;
     email: string | null;
     role: string;
+    username: string | null;
   };
 }
 
@@ -53,8 +54,10 @@ export class AuthService {
       throw Object.assign(new Error('Invalid credentials'), { statusCode: 401 });
     }
 
+    // Include username in JWT payload so middleware can decode it
+    // without an extra DB query
     const token = jwt.sign(
-      { userId: user.id, role: user.role },
+      { userId: user.id, role: user.role, username: user.username },
       JWT_SECRET,
       JWT_SIGN_OPTIONS,
     );
@@ -66,6 +69,7 @@ export class AuthService {
         name: user.name,
         email: user.email,
         role: user.role,
+        username: user.username,
       },
     };
   }

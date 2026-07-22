@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ProductService } from '../services/product.service.js';
 import { CategoryService } from '../services/category.service.js';
 import { catchAsync } from '../utils/catchAsync.js';
+import { AuthRequest } from '../middlewares/auth.middleware.js';
 
 /**
  * Product Controller
@@ -82,8 +83,15 @@ export const ProductController = {
    * POST /api/products
    * Creates a product and returns fresh category usage counts.
    */
-  create: catchAsync(async (req: Request, res: Response) => {
-    const product = await ProductService.create(req.body);
+  create: catchAsync(async (req: AuthRequest, res: Response) => {
+    // Force log to terminal to inspect active token user:
+    console.log("[DEBUG] Product Create req.user:", req.user);
+
+    // Explicitly pass req.user into the service:
+    const product = await ProductService.create({
+      ...req.body,
+      currentUser: req.user ? { role: req.user.role, username: req.user.username } : undefined,
+    });
     const syncCategories = await CategoryService.getAll();
     res.status(201).json({
       success: true,

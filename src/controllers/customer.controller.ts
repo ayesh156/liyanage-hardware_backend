@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { CustomerService } from '../services/customer.service.js';
 import { catchAsync } from '../utils/catchAsync.js';
+import { AuthRequest } from '../middlewares/auth.middleware.js';
 
 export const CustomerController = {
   /**
@@ -45,9 +46,14 @@ export const CustomerController = {
 
   /**
    * POST /api/customers
+   * Creates a new customer with role-prefixed sequential ID.
+   * Requires authentication to determine the user's role for prefix generation.
    */
-  create: catchAsync(async (req: Request, res: Response) => {
-    const customer = await CustomerService.create(req.body);
+  create: catchAsync(async (req: AuthRequest, res: Response) => {
+    const customer = await CustomerService.create({
+      ...req.body,
+      currentUser: req.user ? { role: req.user.role, username: req.user.username } : undefined,
+    });
     res.status(201).json({
       success: true,
       data: customer,

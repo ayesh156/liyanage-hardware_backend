@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/appError.js';
 import { colomboNow } from '../utils/dateUtils.js';
+import { generateSequentialId } from '../utils/idGenerator.js';
 import { CustomerDTO, PaginatedResult } from '../types/index.js';
 
 function toDTO(record: any): CustomerDTO {
@@ -129,16 +130,24 @@ export class CustomerService {
 
   /**
    * POST /api/customers
+   * Generates a role-prefixed sequential 6-digit ID (e.g. cusa-000001, cusc1-000001).
+   * The static legacy ID 'walk-in' is preserved as-is for system-reserved walk-in customers.
    */
-  static async create(input: any): Promise<CustomerDTO> {
+  static async create(input: any & { currentUser?: { role?: string; username?: string } }): Promise<CustomerDTO> {
     if (!input.name || !input.phone) {
       throw new AppError('name and phone are required', 400);
     }
 
     const now = colomboNow();
 
+    // Generate a sequential role-based ID
+    // Preserve 'walk-in' as a static legacy ID
+    const isWalkIn = input.id === 'walk-in' || (input.name || '').toLowerCase() === 'walk-in customer';
+    const id = isWalkIn ? 'walk-in' : await generateSequentialId('customer', input.currentUser);
+
     const item = await prisma.customer.create({
       data: {
+        id,
         name: input.name,
         nameSi: input.nameSi ?? null,
         phone: input.phone,
@@ -159,7 +168,7 @@ export class CustomerService {
   /**
    * PUT /api/customers/:id
    */
-  static async update(id: string, input: any): Promise<CustomerDTO> {
+  static async update(id: string, input: any & { currentUser?: { role?: string; username?: string } }): Promise<CustomerDTO> {
     const existing = await prisma.customer.findUnique({ where: { id } });
     if (!existing) throw new AppError('Customer not found', 404);
 

@@ -67,9 +67,12 @@ export const InvoiceController = {
    * Supports Cash (immediate paid) and Credit (pending with loan tracking).
    */
   create: catchAsync(async (req: AuthRequest, res: Response) => {
+    console.log("[DEBUG] Invoice Create req.user:", req.user);
+
+    // Explicitly pass req.user into the service:
     const invoice = await InvoiceService.create({
       ...req.body,
-      currentUser: req.user ? { name: req.user.name, username: req.user.username } : undefined,
+      currentUser: req.user ? { name: req.user.name, username: req.user.username, role: req.user.role } : undefined,
     });
     res.status(201).json({
       success: true,
