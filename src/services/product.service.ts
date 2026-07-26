@@ -58,6 +58,24 @@ async function generateProductId(currentUser?: { role?: string; username?: strin
   return `${prefix}${padded}`;
 }
 
+// ── Sequential Product No Generation (6-char numeric string, starts at 1000) ──
+async function generateProductNo(): Promise<string> {
+  const lastProduct = await prisma.product.findFirst({
+    orderBy: { no: 'desc' },
+    select: { no: true },
+  });
+
+  let nextNo: number;
+  if (!lastProduct || !lastProduct.no) {
+    nextNo = 1000;
+  } else {
+    const parsed = parseInt(lastProduct.no, 10);
+    nextNo = isNaN(parsed) ? 1000 : parsed + 1;
+  }
+
+  return String(nextNo);
+}
+
 // ── Status Mapping ──
 
 // Maps between frontend display status (space-separated) and Prisma enum (PascalCase)
@@ -221,6 +239,7 @@ async function ensureCategoryId<T extends { productCategory?: string; categoryId
 function toDTO(record: any): ProductDTO {
   return {
     id: record.id,
+    no: record.no,
     searchKey: record.searchKey,
     name: record.name,
     nameSi: record.nameSi ?? undefined,
@@ -261,8 +280,8 @@ export class ProductService {
       minStock,
       maxStock,
       barcode,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
+      sortBy = 'no',
+      sortOrder = 'asc',
     } = params;
 
     const skip = (page - 1) * perPage;
@@ -274,6 +293,10 @@ export class ProductService {
       isDeleted: false,
     };
 
+    // ── COMPREHENSIVE MULTI-COLUMN SEARCH ──────────────────────────────────
+    // FIX: Always search `no` column so product numbers like "1001" are found.
+    // When the frontend passes scope flags (future), they will be respected.
+    // Until then, search ALL columns so the search bar is maximally useful.
     if (search) {
       const q = search.trim();
       where.OR = [
@@ -281,8 +304,14 @@ export class ProductService {
         { name: { contains: q } },
         { productCategory: { contains: q } },
         { barcode: { contains: q } },
+        { no: { contains: q } },
       ];
     }
+
+    // 🚨 CRITICAL FIX: Do NOT exclude products with null/empty categoryId or
+    // productCategory. Products 1001-1003 may have NULL categoryId in the DB.
+    // No explicit categoryId/productCategory filter is added to the where
+    // clause so these products are always returned.
 
     if (categoryId) {
       where.categoryId = categoryId;
@@ -314,7 +343,7 @@ export class ProductService {
 
     // Validate sort field (whitelist to prevent injection)
     const allowedSortFields = [
-      'searchKey', 'name', 'productCategory', 'barcode',
+      'no', 'searchKey', 'name', 'productCategory', 'barcode',
       'cost', 'lastPrice', 'salesPrice', 'displayPrice',
       'storeQty', 'salesType', 'status', 'createdAt', 'updatedAt',
     ];
@@ -404,6 +433,19 @@ export class ProductService {
       throw new AppError('searchKey, name, and productCategory are required', 400);
     }
 
+    // 🚀 DUPLICATE PRODUCT NO VALIDATION
+    // If a 'no' is explicitly provided (not auto-generated), reject if another active product already uses it.
+    if (payload.no !== undefined && payload.no !== null && String(payload.no).trim().length > 0) {
+      const providedNo = String(payload.no).trim();
+      const duplicateNo = await prisma.product.findFirst({
+        where: { no: providedNo, isDeleted: false },
+        select: { id: true },
+      });
+      if (duplicateNo) {
+        throw new AppError(`Product No "${providedNo}" is already in use by another item.`, 400);
+      }
+    }
+
     // Auto-derive status from storeQty if not provided
     const status = statusInput || deriveStatus(storeQty);
     const dbStatus = mapStatusToDb(status);
@@ -415,8 +457,12 @@ export class ProductService {
       categoryId: rawCategoryId ?? null,
     });
 
+    // Generate sequential no (6-char string starting at 1000)
+    const generatedNo = await generateProductNo();
+
     const createData = {
       id: generatedId,
+      no: generatedNo,
       searchKey,
       name,
       nameSinhala,
@@ -471,6 +517,20 @@ export class ProductService {
       throw new AppError('Product not found', 404);
     }
 
+    // 🚀 DUPLICATE PRODUCT NO VALIDATION (update)
+    if (input.no !== undefined && input.no !== null) {
+      const providedNo = String(input.no).trim();
+      if (providedNo.length > 0 && providedNo !== existing.no) {
+        const duplicateNo = await prisma.product.findFirst({
+          where: { no: providedNo, isDeleted: false, NOT: { id } },
+          select: { id: true },
+        });
+        if (duplicateNo) {
+          throw new AppError(`Product No "${providedNo}" is already in use by another item.`, 400);
+        }
+      }
+    }
+
     // 🚀 CRITICAL FIX: Resolve productCategory → categoryId before building update data
     const enriched = await ensureCategoryId(input);
 
@@ -522,6 +582,20 @@ export class ProductService {
       throw new AppError('Product not found', 404);
     }
 
+    // 🚀 DUPLICATE PRODUCT NO VALIDATION (patch)
+    if (input.no !== undefined && input.no !== null) {
+      const providedNo = String(input.no).trim();
+      if (providedNo.length > 0 && providedNo !== existing.no) {
+        const duplicateNo = await prisma.product.findFirst({
+          where: { no: providedNo, isDeleted: false, NOT: { id } },
+          select: { id: true },
+        });
+        if (duplicateNo) {
+          throw new AppError(`Product No "${providedNo}" is already in use by another item.`, 400);
+        }
+      }
+    }
+
     // 🚀 CRITICAL FIX: Resolve productCategory → categoryId before building update data
     const enriched = await ensureCategoryId({
       productCategory: input.productCategory,
@@ -533,7 +607,7 @@ export class ProductService {
     const enrichedDict = enriched as unknown as Record<string, any>;
 
     const patchableFields = [
-      'searchKey', 'name', 'nameSi', 'nameSinhala', 'productCategory', 'categoryId', 'categorySi',
+      'no', 'searchKey', 'name', 'nameSi', 'nameSinhala', 'productCategory', 'categoryId', 'categorySi',
       'barcode', 'cost', 'lastPrice', 'salesPrice', 'displayPrice',
       'storeQty', 'salesType', 'status',
     ];

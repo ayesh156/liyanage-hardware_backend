@@ -13,6 +13,7 @@ export type SalesType = 'Full' | 'Half' | 'Quarter' | 'Piece' | 'Kg' | 'Box' | '
 
 export interface ProductDTO {
   id: string;
+  no: string;
   searchKey: string;
   name: string;
   nameSi?: string;
@@ -34,6 +35,7 @@ export interface ProductDTO {
 
 export interface CreateProductInput {
   searchKey: string;
+  no?: string;
   name: string;
   nameSi?: string;
   nameSinhala?: string;
@@ -52,6 +54,7 @@ export interface CreateProductInput {
 
 export interface UpdateProductInput {
   searchKey?: string;
+  no?: string;
   name?: string;
   nameSi?: string;
   nameSinhala?: string;
