@@ -17,6 +17,15 @@ import { AuthRequest } from '../middlewares/auth.middleware.js';
  */
 export const ProductController = {
   /**
+   * GET /api/products/next-no
+   * Returns the NEXT auto-generated product number (strict last-inserted increment).
+   */
+  getNextProductNo: catchAsync(async (_req: Request, res: Response) => {
+    const { nextNo } = await ProductService.getNextProductNo();
+    res.status(200).json({ success: true, data: { nextNo } });
+  }),
+
+  /**
    * GET /api/products
    * Query params: page, perPage, search, categoryId, category, status,
    *               salesType, minStock, maxStock, barcode, sortBy, sortOrder

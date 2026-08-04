@@ -60,20 +60,67 @@ async function generateProductId(currentUser?: { role?: string; username?: strin
 
 // ── Sequential Product No Generation (6-char numeric string, starts at 1000) ──
 async function generateProductNo(): Promise<string> {
+  // STRICT LAST-INSERTED INCREMENT ALGORITHM:
+  // 1. Fetch the MOST RECENTLY CREATED product (createdAt DESC).
+  // 2. If it exists, candidate = lastNo + 1.
+  // 3. If candidate is NOT in the DB, return candidate immediately.
+  // 4. If candidate IS taken, fall back to global MAX(no) + 1.
+  // 5. Only when DB has ZERO products, return '1001'.
+  // NOTE: No hardcoded '1000' fallback anywhere.
+
+  // Step 1: Most recently created product
   const lastProduct = await prisma.product.findFirst({
-    orderBy: { no: 'desc' },
+    where: { isDeleted: false },
+    orderBy: { createdAt: 'desc' },
     select: { no: true },
   });
 
-  let nextNo: number;
+  // Step 5: Empty DB -> start at 1001 (not 1000)
   if (!lastProduct || !lastProduct.no) {
-    nextNo = 1000;
-  } else {
-    const parsed = parseInt(lastProduct.no, 10);
-    nextNo = isNaN(parsed) ? 1000 : parsed + 1;
+    return '1001';
   }
 
-  return String(nextNo);
+  const lastNo = parseInt(lastProduct.no, 10);
+  if (isNaN(lastNo)) {
+    // Non-numeric last no -> max numeric + 1
+    const allRecords = await prisma.product.findMany({
+      where: { isDeleted: false },
+      select: { no: true },
+    });
+    let maxNo = 0;
+    for (const r of allRecords) {
+      const parsed = parseInt(r.no ?? '', 10);
+      if (!isNaN(parsed) && parsed > maxNo) maxNo = parsed;
+    }
+    return String(maxNo > 0 ? maxNo + 1 : 1001);
+  }
+
+  // Step 2: candidate = last number + 1
+  const candidateNo = lastNo + 1;
+  const candidateStr = String(candidateNo);
+
+  // Step 3: Check if candidate already exists
+  const existingCandidate = await prisma.product.findFirst({
+    where: { no: candidateStr, isDeleted: false },
+    select: { id: true },
+  });
+
+  // Step 3 continued: candidate free -> return it
+  if (!existingCandidate) {
+    return candidateStr;
+  }
+
+  // Step 4: candidate taken -> return global max + 1
+  const allRecords2 = await prisma.product.findMany({
+    where: { isDeleted: false },
+    select: { no: true },
+  });
+  let maxNo2 = 0;
+  for (const r of allRecords2) {
+    const parsed = parseInt(r.no ?? '', 10);
+    if (!isNaN(parsed) && parsed > maxNo2) maxNo2 = parsed;
+  }
+  return String(maxNo2 > 0 ? maxNo2 + 1 : 1001);
 }
 
 // ── Status Mapping ──
@@ -264,6 +311,16 @@ function toDTO(record: any): ProductDTO {
 
 export class ProductService {
   /**
+   * GET /api/products/next-no
+   * Returns the NEXT auto-generated product number using the strict
+   * last-inserted increment rule (candidate = lastCreated.no + 1).
+   */
+  static async getNextProductNo(): Promise<{ nextNo: string }> {
+    const nextNo = await generateProductNo();
+    return { nextNo };
+  }
+
+  /**
    * GET /api/products
    * Paginated, filterable, sortable list of Products.
    * Supports search across searchKey, name, productCategory, and barcode.
@@ -280,8 +337,9 @@ export class ProductService {
       minStock,
       maxStock,
       barcode,
-      sortBy = 'no',
-      sortOrder = 'asc',
+      // DEFAULT SORT: Latest (last added) product first — newest appears at the top.
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
     } = params;
 
     const skip = (page - 1) * perPage;
@@ -442,7 +500,7 @@ export class ProductService {
         select: { id: true },
       });
       if (duplicateNo) {
-        throw new AppError(`Product No "${providedNo}" is already in use by another item.`, 400);
+        throw new AppError(`Product No '${providedNo}' is already taken. Please enter a unique number.`, 400);
       }
     }
 
@@ -457,12 +515,16 @@ export class ProductService {
       categoryId: rawCategoryId ?? null,
     });
 
-    // Generate sequential no (6-char string starting at 1000)
-    const generatedNo = await generateProductNo();
+    // ── PRODUCT NO RESOLUTION ──────────────────────────────────────────────
+    // CRITICAL FIX: If the user explicitly provided a `no` value, ALWAYS respect
+    // it exactly as typed. The auto-generated sequence is ONLY a fallback when
+    // the user leaves the field empty or omits it entirely.
+    const userProvidedNo = optionalStringOrNull(payload.no);
+    const resolvedNo = userProvidedNo ?? (await generateProductNo());
 
     const createData = {
       id: generatedId,
-      no: generatedNo,
+      no: resolvedNo,
       searchKey,
       name,
       nameSinhala,
@@ -526,7 +588,7 @@ export class ProductService {
           select: { id: true },
         });
         if (duplicateNo) {
-          throw new AppError(`Product No "${providedNo}" is already in use by another item.`, 400);
+          throw new AppError(`Product No '${providedNo}' is already taken. Please enter a unique number.`, 400);
         }
       }
     }
@@ -536,6 +598,10 @@ export class ProductService {
 
     // Build update data dynamically
     const updateData: any = {};
+    // 🔴 CRITICAL FIX: Persist the user-submitted `no` value on edit.
+    // Previously `no` was never written to `updateData` — edits silently
+    // dropped any Product No the user changed in the edit modal.
+    if (enriched.no !== undefined) updateData.no = String(enriched.no).trim();
     if (enriched.searchKey !== undefined) updateData.searchKey = enriched.searchKey;
     if (enriched.name !== undefined) updateData.name = enriched.name;
     if (enriched.nameSi !== undefined) updateData.nameSi = enriched.nameSi;
@@ -591,7 +657,7 @@ export class ProductService {
           select: { id: true },
         });
         if (duplicateNo) {
-          throw new AppError(`Product No "${providedNo}" is already in use by another item.`, 400);
+          throw new AppError(`Product No '${providedNo}' is already taken. Please enter a unique number.`, 400);
         }
       }
     }

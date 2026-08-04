@@ -54,6 +54,9 @@ router.post('/reconcile-categories', authMiddleware, ProductController.reconcile
 // GET /api/products/status-summary  — dashboard stats
 router.get('/status-summary', ProductController.statusSummary);
 
+// GET /api/products/next-no  - next auto-generated product number
+router.get('/next-no', ProductController.getNextProductNo);
+
 // GET /api/products/barcode/:barcode   — barcode lookup (for checkout scanning)
 router.get('/barcode/:barcode', ProductController.getByBarcode);
 
