@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { ProductController } from '../controllers/product.controller.js';
-import { authMiddleware } from '../middlewares/auth.middleware.js';
+import { authMiddleware, requireAdmin } from '../middlewares/auth.middleware.js';
 import { AppError } from '../utils/appError.js';
 
 const router = Router();
@@ -82,6 +82,6 @@ router.put('/:id', authMiddleware, normalizeProductBody, ProductController.updat
 router.patch('/:id', authMiddleware, normalizeProductBody, ProductController.patch);
 
 // DELETE /api/products/:id — delete product (authenticated)
-router.delete('/:id', authMiddleware, ProductController.delete);
+router.delete('/:id', authMiddleware, requireAdmin, ProductController.delete);
 
 export default router;

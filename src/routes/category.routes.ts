@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { CategoryController } from '../controllers/category.controller.js';
-import { authMiddleware } from '../middlewares/auth.middleware.js';
+import { authMiddleware, requireAdmin } from '../middlewares/auth.middleware.js';
 
 const router = Router();
 
@@ -25,6 +25,6 @@ router.put('/:id', CategoryController.update);
 router.patch('/:id', CategoryController.patch);
 
 // DELETE /api/categories/:id — delete category
-router.delete('/:id', CategoryController.delete);
+router.delete('/:id', authMiddleware, requireAdmin, CategoryController.delete);
 
 export default router;

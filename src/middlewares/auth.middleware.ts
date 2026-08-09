@@ -25,6 +25,23 @@ export interface AuthRequest extends Request {
  * dynamic invoice number prefix generation.
  * On failure, returns 401 JSON response.
  */
+/**
+ * Express middleware that restricts a route to ADMIN users only.
+ * Must be placed AFTER `authMiddleware` so `req.user` is populated.
+ * Returns HTTP 403 Forbidden when the authenticated user is not an ADMIN.
+ */
+export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    res.status(401).json({ success: false, error: 'Access denied. No token provided.' });
+    return;
+  }
+  if (req.user.role !== 'ADMIN') {
+    res.status(403).json({ success: false, error: 'Only administrators are authorized to perform delete operations' });
+    return;
+  }
+  next();
+};
+
 export const authMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     let token: string | undefined;
