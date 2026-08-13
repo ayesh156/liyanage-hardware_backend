@@ -11,6 +11,23 @@ import { AuthRequest } from '../middlewares/auth.middleware.js';
  */
 export const InvoiceController = {
   /**
+   * GET /api/invoices/next-number
+   * Returns the exact next sequential invoice number that will be saved for
+   * the current authenticated user's role/prefix. This is the single source
+   * of truth for the Live Receipt Preview in Quick Checkout.
+   */
+  getNextNumber: catchAsync(async (req: AuthRequest, res: Response) => {
+    const result = await InvoiceService.getNextNumber(
+      req.user ? { role: req.user.role, username: req.user.username } : undefined
+    );
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Next invoice number fetched successfully',
+    });
+  }),
+
+  /**
    * GET /api/invoices
    * Paginated, searchable, filterable list of invoices.
    * Query params: page, perPage, search, customerId, status, paymentMethod,

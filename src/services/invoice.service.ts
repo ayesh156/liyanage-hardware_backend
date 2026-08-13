@@ -12,9 +12,7 @@ import { InvoiceDTO, InvoiceItemDTO, PaginatedResult } from '../types/index.js';
 //   ADMIN  → prefix "inva-"  → e.g. "inva-000102"
 //   CASHIER → prefix "invc{N}-" where N = cashier number parsed from username
 //           → e.g. cashier1 → "invc1-000045"
-async function generateInvoiceNumber(currentUser?: { role?: string; username?: string }): Promise<string> {
-  console.log("[generateInvoiceNumber] Generating Invoice Number for User:", currentUser);
-
+function getInvoicePrefix(currentUser?: { role?: string; username?: string }): string {
   let prefix = 'inva-'; // Default for Admin
 
   if (currentUser) {
@@ -30,14 +28,29 @@ async function generateInvoiceNumber(currentUser?: { role?: string; username?: s
     }
   }
 
-  // 2. Query DB for the highest existing invoiceNumber for this prefix
+  return prefix;
+}
+
+// ── Helper: Find the highest existing invoice number for a prefix ──
+async function findLastInvoiceNumber(prefix: string): Promise<string | null> {
   const lastRecord = await prisma.$queryRawUnsafe<Array<{ invoiceNumber: string }>>(
     `SELECT invoiceNumber FROM invoices WHERE invoiceNumber LIKE '${prefix}%' ORDER BY invoiceNumber DESC LIMIT 1`
   );
 
+  return lastRecord && lastRecord.length > 0 ? lastRecord[0].invoiceNumber : null;
+}
+
+// ── Helper: Format a numeric sequence into the zero-padded invoice number ──
+function formatSequentialInvoiceNumber(prefix: string, seq: number): string {
+  return `${prefix}${String(seq).padStart(6, '0')}`;
+}
+
+// ── Helper: Compute the next sequential number for a given prefix from the DB ──
+async function computeNextInvoiceNumber(prefix: string): Promise<{ prefix: string; nextNum: number }> {
+  const lastInvoiceNo = await findLastInvoiceNumber(prefix);
+
   let nextNum = 1;
-  if (lastRecord && lastRecord.length > 0) {
-    const lastInvoiceNo = lastRecord[0].invoiceNumber;
+  if (lastInvoiceNo) {
     const trailingDigits = lastInvoiceNo.replace(prefix, '');
     const lastNum = parseInt(trailingDigits, 10);
     if (!isNaN(lastNum)) {
@@ -45,9 +58,19 @@ async function generateInvoiceNumber(currentUser?: { role?: string; username?: s
     }
   }
 
-  // 3. Format with 6-digit zero-padding
-  const padded = String(nextNum).padStart(6, '0');
-  return `${prefix}${padded}`;
+  return { prefix, nextNum };
+}
+
+async function generateInvoiceNumber(currentUser?: { role?: string; username?: string }): Promise<string> {
+  console.log("[generateInvoiceNumber] Generating Invoice Number for User:", currentUser);
+
+  const prefix = getInvoicePrefix(currentUser);
+
+  // Query DB for the highest existing invoiceNumber for this prefix
+  const { nextNum } = await computeNextInvoiceNumber(prefix);
+
+  // Format with 6-digit zero-padding
+  return formatSequentialInvoiceNumber(prefix, nextNum);
 }
 
 // ── DTO Mappers ──
@@ -457,6 +480,29 @@ async function applyCreditTransaction(
 // ── Service Class ──
 
 export class InvoiceService {
+  /**
+   * GET /api/invoices/next-number
+   * Returns the next sequential invoice number that will be used for the
+   * current user's role (Admin → inva-, Cashier N → invc{N}-).
+   *
+   * This endpoint is the single source of truth for the Live Receipt Preview
+   * so the previewed number always matches the number that will be saved and
+   * printed after checkout.
+   */
+  static async getNextNumber(currentUser?: { role?: string; username?: string }): Promise<{
+    invoiceNumber: string;
+    prefix: string;
+    next: number;
+  }> {
+    const prefix = getInvoicePrefix(currentUser);
+    const { nextNum } = await computeNextInvoiceNumber(prefix);
+    return {
+      invoiceNumber: formatSequentialInvoiceNumber(prefix, nextNum),
+      prefix,
+      next: nextNum,
+    };
+  }
+
   /**
    * GET /api/invoices
    * Paginated, searchable list of invoices.

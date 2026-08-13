@@ -17,6 +17,9 @@ const router = Router();
  * DELETE /api/invoices/:id      — Delete with credit reversal
  */
 
+// ── Next Invoice Number (must be BEFORE /:id to avoid route collision) ──
+router.get('/next-number', authMiddleware, InvoiceController.getNextNumber);
+
 // ── List / Create ──
 router.get('/', InvoiceController.list);
 router.post('/', authMiddleware, InvoiceController.create);
