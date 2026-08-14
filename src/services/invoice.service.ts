@@ -243,9 +243,17 @@ async function resolveInvoiceIdentifier(identifier: string) {
 // actual database rows (e.g. via alignProductIds). This function trusts
 // that the productId has already been validated or set to null.
 function buildItemCreateData(item: any, invoiceId: string) {
+  const rawProductId = item.productId;
+  const isCustomId =
+    rawProductId === null ||
+    rawProductId === undefined ||
+    String(rawProductId).trim() === '' ||
+    String(rawProductId).startsWith('custom') ||
+    String(rawProductId) === 'quick-add';
+
   return {
     invoiceId,
-    productId: item.productId ?? null,
+    productId: isCustomId ? null : rawProductId,
     productName: item.productName,
     productNameSi: item.productNameSi ?? null,
     quantity: parseFloat(String(item.quantity || 0)),
@@ -1052,7 +1060,11 @@ export class InvoiceService {
         // New rows are created, and removed rows are neutralized instead of
         // being dropped so dependent history rows remain intact.
         if (input.items !== undefined) {
-          await syncInvoiceItems(tx, dbId, input.items);
+          // Align productIds against actual database rows before syncing so
+          // custom/temporary items (productId: "custom-...") are nullified
+          // instead of crashing the foreign key / data integrity constraint.
+          const alignedItems = await alignProductIds(tx, input.items);
+          await syncInvoiceItems(tx, dbId, alignedItems);
         }
 
         // ── STEP 5: Fetch the complete updated invoice ──
