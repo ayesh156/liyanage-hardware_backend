@@ -189,6 +189,14 @@ export class CategoryService {
       throw new AppError('Category not found', 404);
     }
 
+    // PROTECTED CATEGORY: The system-default HARDWARE category can never be deleted.
+    if (existing.name.trim().toUpperCase() === 'HARDWARE') {
+      throw new AppError(
+        'The system default HARDWARE category is protected and cannot be deleted.',
+        400,
+      );
+    }
+
     // Step A: Safely unassign products linked to this category
     await prisma.product.updateMany({
       where: { categoryId: id },
