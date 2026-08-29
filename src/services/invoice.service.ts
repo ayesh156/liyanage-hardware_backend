@@ -1,9 +1,44 @@
 import { appendFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import prisma from '../lib/prisma.js';
 import { AppError } from '../utils/appError.js';
 import { colomboNow } from '../utils/dateUtils.js';
 import { InvoiceDTO, InvoiceItemDTO, PaginatedResult } from '../types/index.js';
+
+// ── Deterministic Time-Sortable InvoiceItem IDs (ZERO-MIGRATION ORDER FIX) ──
+// The InvoiceItem schema stores its primary key as a random UUID v4 string.
+// Sorting random UUIDs lexicographically (`orderBy: { id: 'asc' }`) produces an
+// arbitrary, pseudo-random sequence that reshuffles line items on every fetch —
+// the persistent "shuffled items" defect across creation, editing and printing.
+// Since the schema cannot be altered (no autoincrement / createdAt / sortOrder
+// column on invoice_items), we generate our OWN time-sortable primary keys:
+//
+//   Live row:    <base36 epoch-ms · 12ch> + "-" + <base36 seq · 3ch> + "-" + <uuid>
+//   Removed row: "zzzzzzzzzzzz"            + "-" + <base36 seq · 3ch> + "-" + <uuid>
+//
+//   • The fixed-width base36 timestamp (left-padded) keeps ORDER BY id ASC
+//     strictly chronological — across invoices and across successive saves.
+//   • The monotonic sequence breaks ties for rows created within the same
+//     millisecond (a POS cart is always inserted in one tight loop).
+//   • The UUID suffix guarantees global uniqueness (the PK can never collide).
+//   • Neutralized/removed rows are re-keyed with a trailing "zzzzzzzzzzzz"
+//     prefix so they ALWAYS sort after the live items and never interleave.
+const ITEM_ID_TS_WIDTH = 12;
+const ITEM_ID_SEQ_WIDTH = 3;
+const ITEM_ID_SEQ_RANGE = 36 ** ITEM_ID_SEQ_WIDTH; // 46656
+let invoiceItemSeq = 0;
+
+function generateSequentialItemId(): string {
+  const ts = Date.now().toString(36).padStart(ITEM_ID_TS_WIDTH, '0');
+  const seq = (invoiceItemSeq++ % ITEM_ID_SEQ_RANGE).toString(36).padStart(ITEM_ID_SEQ_WIDTH, '0');
+  return `${ts}-${seq}-${randomUUID()}`;
+}
+
+function generateRemovedItemId(): string {
+  const seq = (invoiceItemSeq++ % ITEM_ID_SEQ_RANGE).toString(36).padStart(ITEM_ID_SEQ_WIDTH, '0');
+  return `zzzzzzzzzzzz-${seq}-${randomUUID()}`;
+}
 
 // ── User-Role-Based Sequential Invoice Number Generation ──
 // Each user role/cashier generates invoice numbers under their own unique
@@ -112,7 +147,12 @@ function toInvoiceDTO(record: any): InvoiceDTO {
     customerId: record.customerId,
     customerName,
     cashierName: record.cashierName ?? undefined,
-    items: (record.items || []).map(toInvoiceItemDTO),
+    // Removed/neutralized rows (quantity === 0) are kept in the DB for audit
+    // integrity but excluded from every API response so they never surface as
+    // ghost items in edit/preview/print flows.
+    items: (record.items || [])
+      .filter((item: any) => Number(item.quantity) > 0)
+      .map(toInvoiceItemDTO),
     subtotal: Number(record.subtotal),
     discount: record.discount ? Number(record.discount) : undefined,
     discountType: record.discountType ?? undefined,
@@ -148,9 +188,17 @@ function toInvoiceItemDTO(record: any): InvoiceItemDTO {
 }
 
 // ── Invoice Include clause (reusable) ──
+// DETERMINISTIC LINE-ITEM ORDERING (zero-migration):
+// The InvoiceItem schema has no createdAt / sortOrder column, so the relation
+// is explicitly ordered by its primary key (id). Every row written by this
+// service now receives a TIME-SORTABLE id (see generateSequentialItemId), so
+// ORDER BY id ASC yields the true chronological insertion sequence for every
+// fetch — getById, loose resolver findFirst, list, create, update, patch.
+// Legacy rows created before the fix still carry random UUIDs; their order is
+// normalized to the cart order the moment the invoice is saved through update().
 const invoiceInclude = {
   customer: { select: { id: true, name: true } },
-  items: true,
+  items: { orderBy: { id: 'asc' as const } },
   creditTransactions: true,
 };
 
@@ -252,6 +300,8 @@ function buildItemCreateData(item: any, invoiceId: string) {
     String(rawProductId) === 'quick-add';
 
   return {
+    // Time-sortable PK so ORDER BY id ASC reflects insertion order exactly.
+    id: generateSequentialItemId(),
     invoiceId,
     productId: isCustomId ? null : rawProductId,
     productName: item.productName,
@@ -360,6 +410,11 @@ async function syncInvoiceItems(tx: any, invoiceId: string, incomingItems: any[]
   const existingById = new Map(existingItems.map((item: any) => [item.id, item]));
   const matchedIncomingIds = new Set<string>();
 
+  // DETERMINISTIC ORDER ON EVERY SAVE:
+  // Iterating incomingItems in array order and re-keying each row with a fresh
+  // time-sortable id (buildItemCreateData stamps one) guarantees that
+  // `ORDER BY id ASC` on the next fetch returns the EXACT array sequence —
+  // including rows that already existed with random legacy UUIDs.
   for (const item of incomingItems || []) {
     if (!item || typeof item !== 'object') continue;
 
@@ -371,6 +426,7 @@ async function syncInvoiceItems(tx: any, invoiceId: string, incomingItems: any[]
       await tx.invoiceItem.update({
         where: { id: incomingId },
         data: {
+          id: itemData.id, // re-key → sort position mirrors current array index
           productId: itemData.productId,
           productName: itemData.productName,
           productNameSi: itemData.productNameSi,
@@ -395,6 +451,7 @@ async function syncInvoiceItems(tx: any, invoiceId: string, incomingItems: any[]
     await tx.invoiceItem.update({
       where: { id: existingItem.id },
       data: {
+        id: generateRemovedItemId(), // "zzzz…" prefix → always sorts after live items
         quantity: 0,
         unitPrice: 0,
         originalPrice: 0,
@@ -587,7 +644,8 @@ export class InvoiceService {
         orderBy: { [safeSortBy]: safeSortOrder },
         include: {
           customer: { select: { id: true, name: true } },
-          items: true,
+          // Deterministic line-item order — no schema change / no sortOrder column.
+          items: { orderBy: { id: 'asc' } },
         },
       }),
     ]);
@@ -817,7 +875,7 @@ export class InvoiceService {
         where: { id: invoice.id },
         include: {
           customer: { select: { id: true, name: true } },
-          items: true,
+          items: { orderBy: { id: 'asc' } },
           creditTransactions: true,
         },
       });
@@ -1072,7 +1130,7 @@ export class InvoiceService {
           where: { id: dbId },
           include: {
             customer: { select: { id: true, name: true } },
-            items: true,
+            items: { orderBy: { id: 'asc' } },
             creditTransactions: true,
           },
         });
@@ -1211,7 +1269,7 @@ export class InvoiceService {
       data: updateData,
       include: {
         customer: { select: { id: true, name: true } },
-        items: true,
+        items: { orderBy: { id: 'asc' } },
       },
     });
 

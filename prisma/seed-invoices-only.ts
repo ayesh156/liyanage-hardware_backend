@@ -20,7 +20,18 @@
  */
 
 import 'dotenv/config';
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../src/lib/prisma.js';
+
+// ── Helper: Time-sortable InvoiceItem id (mirrors invoice.service.ts) ──
+// Seeds invoice items with deterministic PKs so `ORDER BY id ASC` returns the
+// exact seeded insertion sequence (same zero-migration order fix as production).
+let seedItemSeq = 0;
+function seedItemId(): string {
+  const ts = Date.now().toString(36).padStart(12, '0');
+  const seq = (seedItemSeq++ % 46656).toString(36).padStart(3, '0');
+  return `${ts}-${seq}-${randomUUID()}`;
+}
 
 // ── Helper: Generate collision-proof invoice number ──
 // Produces format: inv-an-XXXXXX where XXXXXX is a 6-character code
@@ -346,6 +357,7 @@ async function main() {
       for (const item of inv.items) {
         await tx.invoiceItem.create({
           data: {
+            id: seedItemId(),
             invoiceId: invoice.id,
             productId: item.productId || null,
             productName: item.productName,
