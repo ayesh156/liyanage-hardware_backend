@@ -139,14 +139,12 @@ export function initCheckoutSyncGateway(
     path: '/socket.io',
     cors: {
       origin: (origin, callback) => {
-        // Multi-origin string එකක් ආවොත් clean කර ගැනීම
         const rawOrigin = origin ? origin.split(',')[0].trim() : origin;
         const normalized = rawOrigin ? rawOrigin.replace(/\/$/, '') : rawOrigin;
 
         if (isOriginAllowed(normalized)) {
           callback(null, true);
         } else {
-          console.warn(`[checkoutSync] Rejected Socket.IO handshake — origin not allowed: ${JSON.stringify(origin)}`);
           callback(new Error('Not allowed by CORS'));
         }
       },
@@ -156,11 +154,9 @@ export function initCheckoutSyncGateway(
     maxHttpBufferSize: 256 * 1024,
   });
 
-  // 🌟 FIX: OpenLiteSpeed proxy එකෙන් duplications නොවීමට Node level එකෙන් exact origin එක force කිරීම
   io.engine.on('initial_headers', (headers: Record<string, string | string[]>, req: any) => {
     const rawOrigin = req.headers.origin;
     if (rawOrigin) {
-      // Multiple headers ඇත්නම් පළමු origin එක පමණක් single string එකක් ලෙස යවයි
       headers['Access-Control-Allow-Origin'] = rawOrigin.split(',')[0].trim();
       headers['Access-Control-Allow-Credentials'] = 'true';
     }
