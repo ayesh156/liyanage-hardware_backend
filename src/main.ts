@@ -24,23 +24,25 @@ const PORT = parseInt(process.env.PORT || '3002', 10);
  *   using trailing-slash-stripped, case-insensitive comparison
  */
 export function isOriginAllowed(origin: string | undefined): boolean {
-  // Proxy/Server internal WebSocket upgrades allow කිරීම
   if (!origin) return true;
 
-  // 1. Whitelist all variants of localhost and 127.0.0.1 (any port, http/https)
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
-  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
+  // 🌟 FIX: Duplicate comma-separated origins ආවොත් මුල් origin එක පමණක් clean කර අත්හැරීම
+  const cleanOrigin = origin.split(',')[0].trim();
 
-  // 2. Safely match the production Liyanage Hardware domain & API subdomain
-  if (/^https:\/\/liyanage\.ecosystemlk\.app\/?$/i.test(origin)) return true;
-  if (/^https:\/\/api\.liyanage\.ecosystemlk\.app\/?$/i.test(origin)) return true;
+  // 1. Whitelist all variants of localhost and 127.0.0.1
+  if (/^https?:\/\/localhost(:\d+)?$/i.test(cleanOrigin)) return true;
+  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(cleanOrigin)) return true;
 
-  // 3. Fallback evaluation for custom CORS_ORIGIN environment declarations
+  // 2. Match production domains
+  if (/^https:\/\/liyanage\.ecosystemlk\.app\/?$/i.test(cleanOrigin)) return true;
+  if (/^https:\/\/api\.liyanage\.ecosystemlk\.app\/?$/i.test(cleanOrigin)) return true;
+
+  // 3. Fallback evaluation
   const envOrigin = process.env.CORS_ORIGIN;
   if (envOrigin) {
     const cleanEnv = envOrigin.replace(/\/$/, '');
-    const cleanOrigin = origin.replace(/\/$/, '');
-    if (cleanEnv.toLowerCase() === cleanOrigin.toLowerCase()) return true;
+    const cleanTarget = cleanOrigin.replace(/\/$/, '');
+    if (cleanEnv.toLowerCase() === cleanTarget.toLowerCase()) return true;
   }
 
   return false;
