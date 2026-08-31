@@ -138,20 +138,13 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      // Single source of truth: the SAME allow-list function main.ts uses
-      // for the REST API. No parallel/hardcoded domain check here — that
-      // duplication is what let this drift out of sync before.
       origin: (origin, callback) => {
-        // Fix: If headers arrive duplicated (comma-separated), extract only the first origin
         const rawOrigin = origin ? origin.split(',')[0].trim() : origin;
-
-        // Defensive normalization: strip a trailing slash before checking
         const normalized = rawOrigin ? rawOrigin.replace(/\/$/, '') : rawOrigin;
 
         if (isOriginAllowed(normalized)) {
           callback(null, true);
         } else {
-          // Log every rejection with the raw value received
           console.warn(`[checkoutSync] Rejected Socket.IO handshake — origin not allowed: ${JSON.stringify(origin)}`);
           callback(new Error('Not allowed by CORS'));
         }
@@ -160,6 +153,14 @@ export function initCheckoutSyncGateway(
       credentials: true,
     },
     maxHttpBufferSize: 256 * 1024,
+  });
+
+  // OpenLiteSpeed එකෙන් එන duplicate headers fix කිරීමට response headers override කිරීම:
+  io.engine.on('initial_headers', (headers: Record<string, string | string[]>, req: any) => {
+    const rawOrigin = req.headers.origin;
+    if (rawOrigin) {
+      headers['Access-Control-Allow-Origin'] = rawOrigin.split(',')[0].trim();
+    }
   });
 
   const nsp = io.of('/checkout-sync');
