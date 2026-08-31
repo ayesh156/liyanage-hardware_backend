@@ -114,7 +114,7 @@ async function runSelfHealing(): Promise<void> {
 }
 
 const httpServer = http.createServer(app);
-export const io = initCheckoutSyncGateway(httpServer, isOriginAllowed);
+initCheckoutSyncGateway(httpServer);
 
 async function startServer() {
   await runSelfHealing();
