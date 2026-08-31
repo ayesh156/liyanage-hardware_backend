@@ -1,9 +1,11 @@
 import 'dotenv/config';
+import http from 'http';
 import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import prisma from './lib/prisma.js';
 import router from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.middleware.js';
+import { initCheckoutSyncGateway } from './gateways/checkoutSync.gateway.js';
 
 const app = express();
 
@@ -21,7 +23,7 @@ const PORT = parseInt(process.env.PORT || '3002', 10);
  * - Fallback evaluation for custom CORS_ORIGIN environment declarations
  *   using trailing-slash-stripped, case-insensitive comparison
  */
-function isOriginAllowed(origin: string | undefined): boolean {
+export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return false;
 
   // 1. Whitelist all variants of localhost and 127.0.0.1 (any port, http/https)
@@ -161,17 +163,28 @@ async function runSelfHealing(): Promise<void> {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// HTTP SERVER + SOCKET.IO ATTACHMENT
+// ═════════════════════════════════════════════════════════════════════════════
+// Socket.IO needs a raw http.Server instance (not the Express app itself) so
+// it can hijack the WebSocket upgrade handshake alongside normal HTTP
+// traffic on the same port. Express keeps handling all existing REST routes
+// unchanged; Socket.IO only intercepts requests to its own `/socket.io` path.
+const httpServer = http.createServer(app);
+export const io = initCheckoutSyncGateway(httpServer, isOriginAllowed);
+
 // ── Start Server (with self-healing preflight) ──────────────────────────────
 async function startServer() {
   // Run self-healing before accepting connections
   await runSelfHealing();
 
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`\n🚀 Hardware Management System API`);
     console.log(`   Environment: ${process.env.NODE_ENV || 'production'}`);
     console.log(`   Listening:   http://localhost:${PORT}`);
     console.log(`   Health:      http://localhost:${PORT}/api/health`);
-    console.log(`   Docs:        http://localhost:${PORT}/api/products (sample)\n`);
+    console.log(`   Docs:        http://localhost:${PORT}/api/products (sample)`);
+    console.log(`   Live Sync:   ws://localhost:${PORT}/socket.io (namespace /checkout-sync)\n`);
   });
 }
 
