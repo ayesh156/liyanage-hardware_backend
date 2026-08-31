@@ -138,29 +138,10 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: (origin, callback) => {
-        const rawOrigin = origin ? origin.split(',')[0].trim() : origin;
-        const normalized = rawOrigin ? rawOrigin.replace(/\/$/, '') : rawOrigin;
-
-        if (isOriginAllowed(normalized)) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      },
-      methods: ['GET', 'POST'],
-      credentials: true,
+      origin: false, // 
     },
     maxHttpBufferSize: 256 * 1024,
-  });
-
-  io.engine.on('initial_headers', (headers: Record<string, string | string[]>, req: any) => {
-    const rawOrigin = req.headers.origin;
-    if (rawOrigin) {
-      headers['Access-Control-Allow-Origin'] = rawOrigin.split(',')[0].trim();
-      headers['Access-Control-Allow-Credentials'] = 'true';
-    }
-  });
+  })
 
   const nsp = io.of('/checkout-sync');
 
