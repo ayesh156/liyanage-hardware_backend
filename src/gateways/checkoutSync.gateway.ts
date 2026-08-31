@@ -138,7 +138,17 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: true, // 🌟 origin: false වෙනුවට true ලෙස වෙනස් කරන්න
+      origin: (origin, callback) => {
+        const rawOrigin = origin ? origin.split(',')[0].trim() : origin;
+        const normalized = rawOrigin ? rawOrigin.replace(/\/$/, '') : rawOrigin;
+
+        if (isOriginAllowed(normalized)) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
+      methods: ['GET', 'POST'],
       credentials: true,
     },
     maxHttpBufferSize: 256 * 1024,
@@ -146,9 +156,6 @@ export function initCheckoutSyncGateway(
 
   const nsp = io.of('/checkout-sync');
 
-  // Surfaces handshake-level failures (bad transport, malformed request,
-  // CORS rejection, etc.) that would otherwise only show up as an opaque
-  // 400 in the browser with nothing in the server logs.
   io.engine.on('connection_error', (err) => {
     console.warn(
       `[checkoutSync] Engine.IO connection_error — code=${err.code} message=${err.message} origin=${JSON.stringify(err.req?.headers?.origin)}`,
@@ -169,9 +176,6 @@ export function initCheckoutSyncGateway(
         return;
       }
 
-      // Leave any previously-joined room for this socket first (defensive —
-      // a client re-joining with a different terminalId shouldn't leak into
-      // two rooms simultaneously).
       const prior = socketMeta.get(socket);
       if (prior) socket.leave(prior.room);
 
@@ -188,36 +192,29 @@ export function initCheckoutSyncGateway(
       };
       socketMeta.set(socket, meta);
 
-      // Tell everyone in the room (including the joiner) how many peers
-      // are now connected, so the frontend can render "2 terminals live".
       const roomSockets = nsp.adapter.rooms.get(room);
       const peerCount = roomSockets ? roomSockets.size : 1;
       nsp.to(room).emit('session_peers', { count: peerCount, roles: [meta.userRole] });
     });
 
-    // ── broadcast_cart_state (sender → relay to every OTHER peer in room) ──
+    // ── broadcast_cart_state ──
     socket.on('broadcast_cart_state', (payload: CartStatePayload) => {
       const meta = socketMeta.get(socket);
       if (!meta) {
         socket.emit('session_error', { message: 'Join a checkout session before broadcasting cart state' });
         return;
       }
-      if (!isPlausibleCartState(payload)) return; // silently drop malformed frames
+      if (!isPlausibleCartState(payload)) return;
 
-      // Relay to every other socket in the room — never echo back to sender,
-      // that's what causes the classic "typing bounces the cursor" bug.
       socket.to(meta.room).emit('sync_cart_state', payload);
     });
 
-    // ── broadcast_invoice_saved (finalize → relay + everyone resets) ──
+    // ── broadcast_invoice_saved ──
     socket.on('broadcast_invoice_saved', (payload: InvoiceSavedPayload) => {
       const meta = socketMeta.get(socket);
       if (!meta) return;
       if (!isPlausibleInvoiceSaved(payload)) return;
 
-      // Broadcast to the WHOLE room including the sender's other tabs, but
-      // the sender's own active tab already reset itself locally on success
-      // — so we exclude the originating socket to avoid a redundant toast.
       socket.to(meta.room).emit('invoice_finalized', payload);
     });
 
@@ -233,8 +230,6 @@ export function initCheckoutSyncGateway(
     socket.on('disconnect', () => {
       const meta = socketMeta.get(socket);
       if (!meta) return;
-      // Room membership is cleaned up automatically by socket.io on
-      // disconnect; we just need to notify remaining peers of the new count.
       setImmediate(() => {
         const roomSockets = nsp.adapter.rooms.get(meta.room);
         const peerCount = roomSockets ? roomSockets.size : 0;
