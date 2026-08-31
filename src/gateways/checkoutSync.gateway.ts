@@ -139,6 +139,7 @@ export function initCheckoutSyncGateway(
     path: '/socket.io',
     cors: {
       origin: (origin, callback) => {
+        // Multi-origin string එකක් ආවොත් පළමුවැන්න පමණක් තෝරාගැනීම
         const rawOrigin = origin ? origin.split(',')[0].trim() : origin;
         const normalized = rawOrigin ? rawOrigin.replace(/\/$/, '') : rawOrigin;
 
@@ -154,11 +155,13 @@ export function initCheckoutSyncGateway(
     maxHttpBufferSize: 256 * 1024,
   });
 
+  // ⚠️ initial_headers listener එකක් මෙහි නොතිබිය යුතුය (එය දැමූ විට header එක duplicate වේ)
+
   const nsp = io.of('/checkout-sync');
 
   io.engine.on('connection_error', (err) => {
     console.warn(
-      `[checkoutSync] Engine.IO connection_error — code=${err.code} message=${err.message} origin=${JSON.stringify(err.req?.headers?.origin)}`,
+      `[checkoutSync] Engine.IO connection_error — code=${err.code} message=${err.message}`,
     );
   });
 
@@ -172,7 +175,7 @@ export function initCheckoutSyncGateway(
       const userRole = String(payload?.userRole || 'unknown').trim();
 
       if (!tenantId || !terminalId) {
-        socket.emit('session_error', { message: 'tenantId and terminalId are required to join a checkout session' });
+        socket.emit('session_error', { message: 'tenantId and terminalId are required' });
         return;
       }
 
@@ -200,21 +203,14 @@ export function initCheckoutSyncGateway(
     // ── broadcast_cart_state ──
     socket.on('broadcast_cart_state', (payload: CartStatePayload) => {
       const meta = socketMeta.get(socket);
-      if (!meta) {
-        socket.emit('session_error', { message: 'Join a checkout session before broadcasting cart state' });
-        return;
-      }
-      if (!isPlausibleCartState(payload)) return;
-
+      if (!meta || !isPlausibleCartState(payload)) return;
       socket.to(meta.room).emit('sync_cart_state', payload);
     });
 
     // ── broadcast_invoice_saved ──
     socket.on('broadcast_invoice_saved', (payload: InvoiceSavedPayload) => {
       const meta = socketMeta.get(socket);
-      if (!meta) return;
-      if (!isPlausibleInvoiceSaved(payload)) return;
-
+      if (!meta || !isPlausibleInvoiceSaved(payload)) return;
       socket.to(meta.room).emit('invoice_finalized', payload);
     });
 
@@ -238,8 +234,6 @@ export function initCheckoutSyncGateway(
       socketMeta.delete(socket);
     });
   });
-
-  console.log('🔌 Checkout Live-Sync gateway attached at /checkout-sync (Socket.IO)');
 
   return io;
 }
