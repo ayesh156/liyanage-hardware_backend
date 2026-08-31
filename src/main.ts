@@ -24,15 +24,16 @@ const PORT = parseInt(process.env.PORT || '3002', 10);
  *   using trailing-slash-stripped, case-insensitive comparison
  */
 export function isOriginAllowed(origin: string | undefined): boolean {
-  if (!origin) return false;
+  // Proxy/Server internal WebSocket upgrades allow කිරීම
+  if (!origin) return true;
 
   // 1. Whitelist all variants of localhost and 127.0.0.1 (any port, http/https)
   if (/^https?:\/\/localhost(:\d+)?$/i.test(origin)) return true;
   if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin)) return true;
 
-  // 2. Safely match the production Liyanage Hardware domain
-  //    (case-insensitive, optional trailing slash safety)
+  // 2. Safely match the production Liyanage Hardware domain & API subdomain
   if (/^https:\/\/liyanage\.ecosystemlk\.app\/?$/i.test(origin)) return true;
+  if (/^https:\/\/api\.liyanage\.ecosystemlk\.app\/?$/i.test(origin)) return true;
 
   // 3. Fallback evaluation for custom CORS_ORIGIN environment declarations
   const envOrigin = process.env.CORS_ORIGIN;
