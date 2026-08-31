@@ -138,19 +138,18 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: [
-        'https://liyanage.ecosystemlk.app',
-        'https://api.liyanage.ecosystemlk.app',
-        'http://localhost:5173',
-        'http://localhost:3000',
-        'http://127.0.0.1:5173'
-      ],
-      methods: ['GET', 'POST', 'OPTIONS'],
+      origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl) or matching origins
+        if (!origin || origin.includes('liyanage.ecosystemlk.app') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
+      methods: ['GET', 'POST'],
       credentials: true,
-      allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
     },
-    allowEIO3: true,
-    maxHttpBufferSize: 256 * 1024, // 256kb
+    maxHttpBufferSize: 256 * 1024,
   });
 
   const nsp = io.of('/checkout-sync');
