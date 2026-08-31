@@ -9,6 +9,8 @@ import { initCheckoutSyncGateway } from './gateways/checkoutSync.gateway.js';
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 const PORT = parseInt(process.env.PORT || '3002', 10);
 
 export function isOriginAllowed(origin: string | undefined): boolean {
