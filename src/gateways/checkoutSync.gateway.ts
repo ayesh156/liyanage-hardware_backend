@@ -11,6 +11,14 @@ export interface CartStatePayload {
   updatedAt: string;
 }
 
+interface SseClient {
+  id: string;
+  tenantId: string;
+  terminalId: string;
+  userRole: string;
+  res: Response;
+}
+
 export interface InvoiceSavedPayload {
   invoiceNumber: string;
   invoiceId?: string;
@@ -29,6 +37,9 @@ interface SseClient {
 }
 
 const rooms = new Map<string, Map<string, SseClient>>();
+
+// 🌟 කාමරයේ අවසන් Cart State එක මතක තබාගන්නා State Cache එක
+const roomStates = new Map<string, any>();
 
 function getRoomKey(tenantId: string, terminalId: string): string {
   return `${tenantId}:${terminalId}`;
@@ -82,7 +93,9 @@ syncRouter.get('/stream', (req: Request, res: Response) => {
   rooms.get(roomKey)!.set(clientId, client);
 
   // Connection සාර්ථක බව දැනුම් දීම
-  res.write(`data: ${JSON.stringify({ event: 'connected', payload: { status: 'ok' } })}\n\n`);
+ const currentState = roomStates.get(roomKey);
+  const initialPayload = currentState ? { status: 'ok', initialState: currentState } : { status: 'ok' };
+  res.write(`data: ${JSON.stringify({ event: 'connected', payload: initialPayload })}\n\n`);
   emitPeerCount(roomKey);
 
   // OLS Timeout වීම වැළැක්වීමට තත්පර 25න් 25ට Heartbeat එකක් යැවීම
@@ -97,6 +110,7 @@ syncRouter.get('/stream', (req: Request, res: Response) => {
       room.delete(clientId);
       if (room.size === 0) {
         rooms.delete(roomKey);
+        roomStates.delete(roomKey);
       } else {
         emitPeerCount(roomKey);
       }
@@ -105,11 +119,21 @@ syncRouter.get('/stream', (req: Request, res: Response) => {
 });
 
 // 2. Cart එකේ වෙනස්කම් යවන API එක (Frontend -> POST)
+// 2. Cart එකේ වෙනස්කම් යවන API එක (Frontend -> POST)
 syncRouter.post('/broadcast-cart', (req: Request, res: Response) => {
   const { tenantId, terminalId, payload } = req.body;
   if (!tenantId || !terminalId || !payload) return res.status(400).json({ error: 'Missing fields' });
 
-  broadcastToRoom(getRoomKey(tenantId, terminalId), 'sync_cart_state', payload, payload.originClientId);
+  const roomKey = getRoomKey(tenantId, terminalId);
+  const existingState = roomStates.get(roomKey);
+
+  if (payload.items?.length === 0 && existingState && existingState.items?.length > 0) {
+    // මෙය හිතාමතා කළ Clear එකක් නොවන අවස්ථාවලදී පරණ state එක ආරක්ෂා කරයි
+  } else {
+    roomStates.set(roomKey, payload);
+  }
+
+  broadcastToRoom(roomKey, 'sync_cart_state', payload, payload.originClientId);
   return res.status(200).json({ success: true });
 });
 
@@ -118,6 +142,9 @@ syncRouter.post('/broadcast-invoice', (req: Request, res: Response) => {
   const { tenantId, terminalId, payload } = req.body;
   if (!tenantId || !terminalId || !payload) return res.status(400).json({ error: 'Missing fields' });
 
-  broadcastToRoom(getRoomKey(tenantId, terminalId), 'invoice_finalized', payload, payload.originClientId);
+  const roomKey = getRoomKey(tenantId, terminalId);
+  roomStates.delete(roomKey); // 
+
+  broadcastToRoom(roomKey, 'invoice_finalized', payload, payload.originClientId);
   return res.status(200).json({ success: true });
 });
