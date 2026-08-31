@@ -138,10 +138,11 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: false, // 
+      origin: true, // 🌟 origin: false වෙනුවට true ලෙස වෙනස් කරන්න
+      credentials: true,
     },
     maxHttpBufferSize: 256 * 1024,
-  })
+  });
 
   const nsp = io.of('/checkout-sync');
 
