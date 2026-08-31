@@ -142,9 +142,17 @@ export function initCheckoutSyncGateway(
       // for the REST API. No parallel/hardcoded domain check here — that
       // duplication is what let this drift out of sync before.
       origin: (origin, callback) => {
-        if (isOriginAllowed(origin)) {
+        // Defensive normalization: strip a trailing slash before checking,
+        // in case a proxy layer or client ever sends one.
+        const normalized = origin ? origin.replace(/\/$/, '') : origin;
+        if (isOriginAllowed(normalized)) {
           callback(null, true);
         } else {
+          // Log every rejection with the raw value received — if this ever
+          // fires for what looks like a legitimate origin, the printed
+          // value (not what you *think* was sent) is the fastest way to
+          // spot a stale deploy, an extra space, a protocol mismatch, etc.
+          console.warn(`[checkoutSync] Rejected Socket.IO handshake — origin not allowed: ${JSON.stringify(origin)}`);
           callback(new Error('Not allowed by CORS'));
         }
       },
@@ -155,6 +163,15 @@ export function initCheckoutSyncGateway(
   });
 
   const nsp = io.of('/checkout-sync');
+
+  // Surfaces handshake-level failures (bad transport, malformed request,
+  // CORS rejection, etc.) that would otherwise only show up as an opaque
+  // 400 in the browser with nothing in the server logs.
+  io.engine.on('connection_error', (err) => {
+    console.warn(
+      `[checkoutSync] Engine.IO connection_error — code=${err.code} message=${err.message} origin=${JSON.stringify(err.req?.headers?.origin)}`,
+    );
+  });
 
   nsp.on('connection', (socket: Socket) => {
     const decodedUser = tryDecodeUser(socket);
