@@ -138,9 +138,11 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
+      // Single source of truth: the SAME allow-list function main.ts uses
+      // for the REST API. No parallel/hardcoded domain check here — that
+      // duplication is what let this drift out of sync before.
       origin: (origin, callback) => {
-        // Allow if origin is permitted by the app's standard whitelist
-        if (!origin || isOriginAllowed(origin) || origin.includes('liyanage.ecosystemlk.app')) {
+        if (isOriginAllowed(origin)) {
           callback(null, true);
         } else {
           callback(new Error('Not allowed by CORS'));
@@ -149,7 +151,6 @@ export function initCheckoutSyncGateway(
       methods: ['GET', 'POST'],
       credentials: true,
     },
-    allowEIO3: true,
     maxHttpBufferSize: 256 * 1024,
   });
 
