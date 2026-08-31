@@ -56,22 +56,21 @@ export function isOriginAllowed(origin: string | undefined): boolean {
  * - OPTIONS preflight always returns 204 immediately, never reaching the router
  */
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // 🌟 Socket.io ඉල්ලීම් Express CORS middleware එකෙන් ඉ외 කර Engine.IO වෙතම භාර දෙන්න
+  if (req.path.startsWith('/socket.io')) {
+    return next();
+  }
+
   const origin = req.headers.origin;
 
   // Inform downstream caches that the response varies by Origin
   res.setHeader('Vary', 'Origin');
 
   if (origin && isOriginAllowed(origin)) {
-    // ── Origin is explicitly allowed — echo it back ──
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
   } else {
-    // ── Production fallback default to eliminate zero-header dropouts ──
-    // Handles cases where:
-    //   a) Origin header is absent (proxy-to-server requests)
-    //   b) Origin header is present but has a trailing slash mismatch
-    //   c) Origin header is masked during internal reverse proxy handshakes
     res.setHeader(
       'Access-Control-Allow-Origin',
       'https://liyanage.ecosystemlk.app',
@@ -80,7 +79,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
   }
 
-  // ── OPTIONS preflight — respond immediately, never reaches router ──
+  // ── OPTIONS preflight ──
   if (req.method === 'OPTIONS') {
     res.setHeader(
       'Access-Control-Allow-Methods',
@@ -90,7 +89,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
       'Access-Control-Allow-Headers',
       'Content-Type, Authorization, Cookie',
     );
-    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+    res.setHeader('Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
 

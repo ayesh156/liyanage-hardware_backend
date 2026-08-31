@@ -138,18 +138,11 @@ export function initCheckoutSyncGateway(
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl) or matching origins
-        if (!origin || origin.includes('liyanage.ecosystemlk.app') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      },
-      methods: ['GET', 'POST'],
+      // 🌟 Pass කරන්න ලැබුණු callback එකම මෙහි භාවිත කරන්න (Single source of truth)
+      origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
       credentials: true,
     },
-    maxHttpBufferSize: 256 * 1024,
+    maxHttpBufferSize: 256 * 1024, // 256kb
   });
 
   const nsp = io.of('/checkout-sync');
