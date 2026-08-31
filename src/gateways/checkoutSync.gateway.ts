@@ -133,20 +133,23 @@ function tryDecodeUser(socket: Socket): { id?: string; name?: string; role?: str
 
 export function initCheckoutSyncGateway(
   httpServer: HttpServer,
-  // Injected rather than imported back from main.ts to avoid a circular
-  // module dependency (main.ts imports this file to boot the gateway).
   isOriginAllowed: (origin: string | undefined) => boolean = () => true,
 ): SocketIOServer {
   const io = new SocketIOServer(httpServer, {
     path: '/socket.io',
     cors: {
-      // Reuse the exact same origin whitelist as the REST API (localhost,
-      // 127.0.0.1, the production domain, and CORS_ORIGIN env override) so
-      // the socket handshake and REST cookies always agree on trust.
-      origin: (origin, cb) => cb(null, isOriginAllowed(origin)),
+      origin: [
+        'https://liyanage.ecosystemlk.app',
+        'https://api.liyanage.ecosystemlk.app',
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://127.0.0.1:5173'
+      ],
+      methods: ['GET', 'POST', 'OPTIONS'],
       credentials: true,
+      allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
     },
-    // Cap frame size — carts are small JSON blobs, never large payloads.
+    allowEIO3: true,
     maxHttpBufferSize: 256 * 1024, // 256kb
   });
 
