@@ -65,7 +65,7 @@ function emitPeerCount(roomKey: string) {
 
 export const syncRouter = Router();
 
-// 1. Client Browser එක සම්බන්ධ වන තැන (Long-lived SSE Stream)
+// 1. Client Browser එක සම්බන්ධ වන තැන (Leak-Proof Safe SSE Stream)
 syncRouter.get('/stream', (req: Request, res: Response) => {
   const tenantId = String(req.query.tenantId || '').trim();
   const terminalId = String(req.query.terminalId || '').trim();
@@ -76,12 +76,17 @@ syncRouter.get('/stream', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'tenantId and terminalId are required' });
   }
 
-  // 🌟 OLS Reverse Proxy එකට "මේක stream එකක්, buffer කරන්න එපා" කියන්න විශේෂ Headers
+  // 🛡️ 1. Dead Socket / Ghost TCP Connection වීම වැළැක්වීමට OS Keep-Alive Settings
+  req.socket.setKeepAlive(true, 10000);
+  req.socket.setNoDelay(true);
+  req.socket.setTimeout(0);
+
+  // 🌟 OLS Reverse Proxy එකට buffer නොකර stream කිරීමට Headers
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no' 
+    'X-Accel-Buffering': 'no',
   });
 
   const roomKey = getRoomKey(tenantId, terminalId);
@@ -92,19 +97,20 @@ syncRouter.get('/stream', (req: Request, res: Response) => {
   const client: SseClient = { id: clientId, tenantId, terminalId, userRole, res };
   rooms.get(roomKey)!.set(clientId, client);
 
-  // Connection සාර්ථක බව දැනුම් දීම
- const currentState = roomStates.get(roomKey);
+  // Connection සාර්ථක බව සහ Initial State යැවීම
+  const currentState = roomStates.get(roomKey);
   const initialPayload = currentState ? { status: 'ok', initialState: currentState } : { status: 'ok' };
   res.write(`data: ${JSON.stringify({ event: 'connected', payload: initialPayload })}\n\n`);
   emitPeerCount(roomKey);
 
-  // OLS Timeout වීම වැළැක්වීමට තත්පර 25න් 25ට Heartbeat එකක් යැවීම
-  const keepAlive = setInterval(() => {
-    res.write(`:\n\n`);
-  }, 25000);
+  // 🛡️ 2. Safe Cleanup & Socket Destruction Function
+  let isCleanedUp = false;
+  const cleanup = () => {
+    if (isCleanedUp) return;
+    isCleanedUp = true;
 
-  req.on('close', () => {
     clearInterval(keepAlive);
+
     const room = rooms.get(roomKey);
     if (room) {
       room.delete(clientId);
@@ -115,10 +121,36 @@ syncRouter.get('/stream', (req: Request, res: Response) => {
         emitPeerCount(roomKey);
       }
     }
-  });
+
+    try {
+      if (!res.writableEnded) res.end();
+      req.socket.destroy(); // 🌟 Dead TCP Socket එක Linux Kernel එකෙන් ක්ෂණිකව Destroy කිරීම
+    } catch {
+      // ignore
+    }
+  };
+
+  // 🛡️ 3. Safe Heartbeat (Socket එක Dead නම් Server එක Hang නොවී ක්ෂණිකව Clean කිරීම)
+  const keepAlive = setInterval(() => {
+    if (res.writableEnded || !res.writable) {
+      cleanup();
+      return;
+    }
+    const writeOk = res.write(':\n\n');
+    if (!writeOk) {
+      cleanup();
+    }
+  }, 20000);
+
+  // 🛡️ 4. පරිගණකය Shutdown කළත් හෝ Network කැඩුනත් සියලු Disconnect Events අල්ලා ගැනීම
+  req.on('close', cleanup);
+  req.on('end', cleanup);
+  req.on('error', cleanup);
+  res.on('close', cleanup);
+  res.on('error', cleanup);
+  res.on('finish', cleanup);
 });
 
-// 2. Cart එකේ වෙනස්කම් යවන API එක (Frontend -> POST)
 // 2. Cart එකේ වෙනස්කම් යවන API එක (Frontend -> POST)
 syncRouter.post('/broadcast-cart', (req: Request, res: Response) => {
   const { tenantId, terminalId, payload } = req.body;
