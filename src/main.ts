@@ -111,4 +111,44 @@ async function startServer() {
 }
 
 startServer();
+
+// 🛡️ 1. OpenLiteSpeed (lsnode) Safe Graceful Shutdown Hook
+let isShuttingDown = false;
+function handleGracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n[lsnode] Received ${signal}. Closing HTTP server and database gracefully...`);
+
+  // Stop accepting new connections
+  httpServer.close(async () => {
+    try {
+      await prisma.$disconnect();
+      console.log('[lsnode] Database disconnected. Exiting cleanly.');
+      process.exit(0);
+    } catch (err) {
+      console.error('[lsnode] Error during database disconnect:', err);
+      process.exit(1);
+    }
+  });
+
+  // Safe Timeout: Close forcibly if background sockets fail to exit within 5s
+  setTimeout(() => {
+    console.error('[lsnode] Force exiting after 5s timeout.');
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+
+// 🛡️ 2. Prevent Unexpected Daemon Crashes (Unhandled Rejection Trap)
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[lsnode] Unhandled Promise Rejection trapped:', reason);
+});
+
+process.on('uncaughtException', (err: Error) => {
+  console.error('[lsnode] Uncaught Exception trapped:', err);
+});
+
 export default app;

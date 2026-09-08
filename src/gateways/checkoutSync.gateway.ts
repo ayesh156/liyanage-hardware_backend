@@ -50,11 +50,35 @@ function broadcastToRoom(roomKey: string, event: string, payload: any, senderCli
   if (!room) return;
 
   const data = JSON.stringify({ event, payload });
+  const deadClientIds: string[] = [];
+
   room.forEach((client) => {
     // තමන්ගේම update එක තමන්ට යවන්නේ නෑ
     if (senderClientId && client.id === senderClientId) return;
-    client.res.write(`data: ${data}\n\n`);
+
+    try {
+      if (client.res.writableEnded || !client.res.writable) {
+        deadClientIds.push(client.id);
+        return;
+      }
+      const canWrite = client.res.write(`data: ${data}\n\n`);
+      if (!canWrite) {
+        // Buffer එක full නම් OLS pipe hang වීම වළක්වා dead list එකට එක් කිරීම
+        deadClientIds.push(client.id);
+      }
+    } catch {
+      deadClientIds.push(client.id);
+    }
   });
+
+  // කාමරයේ සිරවී ඇති dead sockets ඉවත් කිරීම
+  if (deadClientIds.length > 0) {
+    deadClientIds.forEach(id => room.delete(id));
+    if (room.size === 0) {
+      rooms.delete(roomKey);
+      roomStates.delete(roomKey);
+    }
+  }
 }
 
 function emitPeerCount(roomKey: string) {

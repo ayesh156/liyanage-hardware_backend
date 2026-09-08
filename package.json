@@ -6,7 +6,8 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "tsup src/main.ts --outDir dist --format esm --clean --sourcemap",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && tsup src/main.ts --outDir dist --format esm --clean --sourcemap",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",
     "seed": "npx prisma db seed",

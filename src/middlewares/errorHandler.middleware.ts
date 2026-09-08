@@ -113,7 +113,12 @@ export function errorHandler(
     console.warn(`[WARN] ${error.statusCode} — ${error.message}`);
   }
 
-  // ── 3. Response ──
+  // ── 3. Response (OLS/SSE Stream Safe Guard) ──
+  // 🌟 If headers are already sent (e.g. active SSE stream), delegate to Express default handler to avoid crash
+  if (res.headersSent) {
+    return _next(err);
+  }
+
   res.status(error.statusCode).json({
     success: false,
     error: error.message,
