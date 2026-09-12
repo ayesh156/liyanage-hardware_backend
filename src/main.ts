@@ -1,4 +1,6 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 import http from 'http';
 import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
@@ -8,11 +10,35 @@ import { errorHandler } from './middlewares/errorHandler.middleware.js';
 // 🌟 අලුත් SSE router එක import කිරීම
 import { syncRouter } from './gateways/checkoutSync.gateway.js';
 
+// 📁 .env Load & Terminal Path Inspection
+const envPaths = [
+  path.join(process.cwd(), '.env'),
+  path.join(process.cwd(), 'backend', '.env'),
+];
+
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    console.log(`📁 Loading .env from: ${envPath}`);
+    dotenv.config({ path: envPath });
+    break;
+  }
+}
+
+
 const app = express();
 
 app.set('trust proxy', 1);
 
 const PORT = parseInt(process.env.PORT || '3002', 10);
+
+// 🛡️ [FIX] Origin Header Cleaning Middleware (OpenLiteSpeed / Nginx multi-header strip)
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  if (origin && typeof origin === 'string' && origin.includes(',')) {
+    req.headers.origin = origin.split(',')[0].trim();
+  }
+  next();
+});
 
 export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
@@ -33,29 +59,22 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   return false;
 }
 
+// 🌐 Clean CORS Middleware with Origin Whitelist
 app.use((req: Request, res: Response, next: NextFunction) => {
-  const originalSetHeader = res.setHeader.bind(res);
-  res.setHeader = function (name: string, value: any) {
-    if (name.toLowerCase() === 'access-control-allow-origin' && typeof value === 'string') {
-      value = value.split(',')[0].trim();
-    }
-    return originalSetHeader(name, value);
-  };
-
-  const origin = req.headers.origin;
+  const origin = req.headers.origin as string | undefined;
   res.setHeader('Vary', 'Origin');
 
-  const allowedOrigin = (origin && isOriginAllowed(origin)) 
-    ? origin.split(',')[0].trim() 
-    : 'https://liyanage.ecosystemlk.app';
-
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
+  } else if (!origin) {
+    res.setHeader('Access-Control-Allow-Origin', 'https://liyanage.ecosystemlk.app');
+  }
 
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With');
     res.setHeader('Access-Control-Max-Age', '86400');
     return res.status(204).end();
   }
@@ -63,9 +82,22 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+import rateLimit from 'express-rate-limit';
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// 🛡️ API Rate Limiter (DDoS & Database Connection Exhaustion Shield)
+const apiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200,                  // Limit each IP to 200 requests per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+app.use('/api', apiRateLimiter);
 
 app.use((req, _res, next) => {
   const start = Date.now();
@@ -74,6 +106,24 @@ app.use((req, _res, next) => {
     console.log(`[${req.method}] ${req.originalUrl} → ${_res.statusCode} (${duration}ms)`);
   });
   next();
+});
+
+// 🩺 System Health & Connectivity Route
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    system: 'Liyanage Hardware System API',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Root API Info Route
+app.get('/', (_req: Request, res: Response) => {
+  res.json({
+    name: 'Liyanage Hardware Management API',
+    status: 'running',
+    port: PORT,
+  });
 });
 
 // 🌟 /api/sync යටතේ SSE Routes ටික mount කිරීම
@@ -102,12 +152,25 @@ async function runSelfHealing(): Promise<void> {
 
 const httpServer = http.createServer(app);
 
+// 🚀 Server Initialization & Startup Banner
 async function startServer() {
-  await runSelfHealing();
-  httpServer.listen(PORT, () => {
-    console.log(`\n🚀 Hardware Management System API listening on port ${PORT}\n`);
-    console.log(`📡 SSE Gateway active at /api/sync/stream\n`);
-  });
+  try {
+    // 🩺 Check MariaDB Adapter connection on startup
+    await prisma.$connect();
+    console.log('✅ MariaDB Driver Adapter connected successfully (Max pool: 5)');
+
+    await runSelfHealing();
+
+    httpServer.listen(PORT, () => {
+      console.log(`🚀 Liyanage API running on http://localhost:${PORT}`);
+      console.log(`🩺 Health Check: http://localhost:${PORT}/health`);
+      console.log(`📡 SSE Gateway active: http://localhost:${PORT}/api/sync/stream`);
+      console.log(`🌐 Production Domain: https://liyanage.ecosystemlk.app\n`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
 }
 
 startServer();
