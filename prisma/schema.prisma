@@ -57,12 +57,12 @@ enum UserRole {
 // ── Generator & Datasource ──────────────────────────────────────────────────────
 
 generator client {
-  provider    = "prisma-client-js"
-  engineType  = "library"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "mysql"
+  url      = env("DATABASE_URL")
 }
 
 // ── Models ──────────────────────────────────────────────────────────────────────
