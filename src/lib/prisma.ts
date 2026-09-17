@@ -8,20 +8,23 @@ if (!rawUrl) {
   throw new Error('❌ Critical Architecture Error: DATABASE_URL is missing in environment variables.');
 }
 
-// අනාගත Load Balancing සහ Spikes වලට මුහුණ දීම සඳහා URL එක මඟින්ම Native Params සැකසීම
+// 1. Connection Pooling Params URL එකට සකස් කිරීම
 const dbUrl = new URL(rawUrl);
 dbUrl.searchParams.set('connection_limit', '5'); // උපරිම connections 5යි
 dbUrl.searchParams.set('connect_timeout', '15'); // 15s handshake timeout
 dbUrl.searchParams.set('pool_timeout', '15');    // 15s pool checkout timeout
 
+// 2. Prisma 7 Engine එකට කියවීමට හැකි වන සේ process.env එකට නව URL එක overwrite කිරීම
+process.env.DATABASE_URL = dbUrl.toString();
+
+// 3. Prisma 7 Constructor එක හිස්ව (Empty) call කිරීම
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    datasourceUrl: dbUrl.toString(),
     log: process.env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['warn', 'error'],
-  } as any);
+  });
 
-// Worker processes recycle වීමේදී memory leaks වැළැක්වීම සඳහා අනිවාර්ය Singleton Cache කිරීම
+// Worker processes recycle වීමේදී memory leaks වැළැක්වීම සඳහා Unconditional Singleton Caching
 globalForPrisma.prisma = prisma;
 
 let isConnected = false;
