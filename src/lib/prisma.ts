@@ -17,12 +17,7 @@ dbUrl.searchParams.set('pool_timeout', '15');    // 15s pool checkout timeout
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    datasources: {
-      db: {
-        url: dbUrl.toString(),
-      },
-    },
-    // Heavy load එකකදී performance බැලීමට warnings පමණක් log කිරීම
+    datasourceUrl: dbUrl.toString(),
     log: process.env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['warn', 'error'],
   } as any);
 
