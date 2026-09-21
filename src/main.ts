@@ -2,13 +2,14 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
-import express, { Request, Response, NextFunction } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
-import prisma from './lib/prisma.js';
-import router from './routes/index.js';
-import { errorHandler } from './middlewares/errorHandler.middleware.js';
+import cors from 'cors';
+import { prisma, connectDB, disconnectDB } from './lib/prisma.ts';
+import router from './routes/index.ts';
+import { errorHandler } from './middlewares/errorHandler.middleware.ts';
 // 🌟 අලුත් SSE router එක import කිරීම
-import { syncRouter } from './gateways/checkoutSync.gateway.js';
+import { syncRouter } from './gateways/checkoutSync.gateway.ts';
 
 // 📁 .env Load & Terminal Path Inspection
 const envPaths = [
@@ -40,47 +41,40 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-export function isOriginAllowed(origin: string | undefined): boolean {
-  if (!origin) return true;
-  const cleanOrigin = origin.split(',')[0].trim();
+// ── BULLETPROOF PRODUCTION CORS CONFIGURATION ────────────────
+const allowedOrigins = [
+  'https://lbd.ecosystemlk.app',
+  'https://api.lbd.ecosystemlk.app',
+  'https://liyanage.ecosystemlk.app',
+  'https://api.liyanage.ecosystemlk.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3002',
+  process.env.CORS_ORIGIN || ''
+].filter(Boolean);
 
-  if (/^https?:\/\/localhost(:\d+)?$/i.test(cleanOrigin)) return true;
-  if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(cleanOrigin)) return true;
-  if (/^https:\/\/liyanage\.ecosystemlk\.app\/?$/i.test(cleanOrigin)) return true;
-  if (/^https:\/\/api\.liyanage\.ecosystemlk\.app\/?$/i.test(cleanOrigin)) return true;
+app.use(cors({
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean | string) => void) => {
+    // Mobile apps, server-to-server, curl ba same-origin allow kora
+    if (!origin) return callback(null, true);
 
-  const envOrigin = process.env.CORS_ORIGIN;
-  if (envOrigin) {
-    const cleanEnv = envOrigin.replace(/\/$/, '');
-    const cleanTarget = cleanOrigin.replace(/\/$/, '');
-    if (cleanEnv.toLowerCase() === cleanTarget.toLowerCase()) return true;
-  }
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    const isAllowed = allowedOrigins.some(item => cleanOrigin === item.replace(/\/+$/, '')) ||
+                      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin);
 
-  return false;
-}
+    if (isAllowed) {
+      return callback(null, cleanOrigin);
+    }
 
-// 🌐 Clean CORS Middleware with Origin Whitelist
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const origin = req.headers.origin as string | undefined;
-  res.setHeader('Vary', 'Origin');
-
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
-  } else if (!origin) {
-    res.setHeader('Access-Control-Allow-Origin', 'https://liyanage.ecosystemlk.app');
-  }
-
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    return res.status(204).end();
-  }
-
-  next();
-});
+    // Safe Fallback: new Error() throw na kore primary frontend echo kore
+    return callback(null, 'https://lbd.ecosystemlk.app');
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Set-Cookie'],
+  maxAge: 86400 // 24 hours preflight cache
+}));
 
 import rateLimit from 'express-rate-limit';
 
@@ -129,6 +123,17 @@ app.get('/', (_req: Request, res: Response) => {
 // 🌟 /api/sync යටතේ SSE Routes ටික mount කිරීම
 app.use('/api/sync', syncRouter);
 app.use('/api', router);
+
+// Error Handler-er age CORS headers attach kora (500 Error-e CORS drop hoa thekate)
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin.replace(/\/+$/, ''));
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  next(err);
+});
+
 app.use(errorHandler);
 
 async function runSelfHealing(): Promise<void> {
@@ -150,23 +155,48 @@ async function runSelfHealing(): Promise<void> {
   }
 }
 
+// 🌟 Database Keep-Alive Ping: wait_timeout (30s) e idle socket kill hoa thekate prottek 20s e ping kore
+let keepAliveInterval: NodeJS.Timeout | undefined;
+function startKeepAlivePing(): void {
+  keepAliveInterval = setInterval(async () => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch (err) {
+      console.error('[Keep-Alive] Ping failed:', (err as Error).message);
+    }
+  }, 20000);
+  keepAliveInterval.unref();
+}
+
 const httpServer = http.createServer(app);
 
-// 🚀 Server Initialization & Startup Banner
+// OpenLiteSpeed lsnode pipe socket ebong Local Port dual-support
+const isLSNode = Boolean(process.env.LSAPI_CHILDREN);
+const LISTEN_PORT = isLSNode ? undefined : PORT;
+
+// 🚀 Server Initialization & Startup Sequence
 async function startServer() {
   try {
-    // 🩺 Check MariaDB Adapter connection on startup
-    await prisma.$connect();
-    console.log('✅ MariaDB Driver Adapter connected successfully (Max pool: 5)');
+    // 1. Verify connection using connectDB helper
+    await connectDB();
+    console.log('✅ MariaDB Driver Adapter connected successfully');
 
-    await runSelfHealing();
-
-    httpServer.listen(PORT, () => {
-      console.log(`🚀 Liyanage API running on http://localhost:${PORT}`);
-      console.log(`🩺 Health Check: http://localhost:${PORT}/health`);
-      console.log(`📡 SSE Gateway active: http://localhost:${PORT}/api/sync/stream`);
-      console.log(`🌐 Production Domain: https://liyanage.ecosystemlk.app\n`);
-    });
+    // 2. Start listener based on environment
+    if (LISTEN_PORT) {
+      httpServer.listen(LISTEN_PORT, () => {
+        console.log(`🚀 API running on http://localhost:${LISTEN_PORT}`);
+        console.log(`🩺 Health Check: http://localhost:${LISTEN_PORT}/health`);
+        console.log(`📡 SSE Gateway active: http://localhost:${LISTEN_PORT}/api/sync/stream`);
+        runSelfHealing().catch((err) => console.error('Background self-healing error:', err));
+        startKeepAlivePing();
+      });
+    } else {
+      httpServer.listen(() => {
+        console.log('🚀 API running via OpenLiteSpeed lsnode pipe');
+        runSelfHealing().catch((err) => console.error('Background self-healing error:', err));
+        startKeepAlivePing();
+      });
+    }
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);
@@ -183,11 +213,14 @@ function handleGracefulShutdown(signal: string) {
 
   console.log(`\n[lsnode] Received ${signal}. Closing HTTP server and database gracefully...`);
 
+  // Explicitly clear keep-alive interval
+  if (keepAliveInterval) clearInterval(keepAliveInterval);
+
   // Stop accepting new connections
   httpServer.close(async () => {
     try {
-      await prisma.$disconnect();
-      console.log('[lsnode] Database disconnected. Exiting cleanly.');
+      await disconnectDB();
+      console.log('[lsnode] Database disconnected cleanly. Exiting.');
       process.exit(0);
     } catch (err) {
       console.error('[lsnode] Error during database disconnect:', err);

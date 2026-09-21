@@ -1,6 +1,6 @@
-import { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import prisma from '../lib/prisma.js';
+import prisma from '../lib/prisma.ts';
 
 const JWT_SECRET: string = process.env.JWT_SECRET || 'liyanage-hardware-jwt-secret-change-in-production';
 

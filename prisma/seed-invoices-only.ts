@@ -21,7 +21,7 @@
 
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
-import { prisma } from '../src/lib/prisma.js';
+import { prisma } from '../src/lib/prisma.ts';
 
 // ── Helper: Time-sortable InvoiceItem id (mirrors invoice.service.ts) ──
 // Seeds invoice items with deterministic PKs so `ORDER BY id ASC` returns the

@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import productRouter from './product.routes.js';
-import authRouter from './auth.routes.js';
-import customerRouter from './customer.routes.js';
-import categoryRouter from './category.routes.js';
-import invoiceRouter from './invoice.routes.js';
-import userRouter from './user.routes.js';
+import productRouter from './product.routes.ts';
+import authRouter from './auth.routes.ts';
+import customerRouter from './customer.routes.ts';
+import categoryRouter from './category.routes.ts';
+import invoiceRouter from './invoice.routes.ts';
+import userRouter from './user.routes.ts';
 
 const router = Router();
 

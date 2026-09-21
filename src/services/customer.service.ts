@@ -1,8 +1,8 @@
-import prisma from '../lib/prisma.js';
-import { AppError } from '../utils/appError.js';
-import { colomboNow } from '../utils/dateUtils.js';
-import { generateSequentialId } from '../utils/idGenerator.js';
-import { CustomerDTO, PaginatedResult } from '../types/index.js';
+import prisma from '../lib/prisma.ts';
+import { AppError } from '../utils/appError.ts';
+import { colomboNow } from '../utils/dateUtils.ts';
+import { generateSequentialId } from '../utils/idGenerator.ts';
+import type { CustomerDTO, PaginatedResult } from '../types/index.ts';
 
 function toDTO(record: any): CustomerDTO {
   return {

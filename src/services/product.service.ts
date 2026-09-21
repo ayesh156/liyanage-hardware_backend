@@ -1,15 +1,15 @@
-import prisma from '../lib/prisma.js';
-import { AppError } from '../utils/appError.js';
+import prisma from '../lib/prisma.ts';
+import { AppError } from '../utils/appError.ts';
 import { Prisma } from '@prisma/client';
-import { colomboNow, colomboMySQLDateTime, colomboDate } from '../utils/dateUtils.js';
+import { colomboNow, colomboMySQLDateTime, colomboDate } from '../utils/dateUtils.ts';
 import {
-  CreateProductInput,
-  UpdateProductInput,
-  ProductDTO,
-  PaginatedResult,
-  ProductQueryParams,
-  ProductStatus as ProductStatusType,
-} from '../types/index.js';
+  type CreateProductInput,
+  type UpdateProductInput,
+  type ProductDTO,
+  type PaginatedResult,
+  type ProductQueryParams,
+  type ProductStatus as ProductStatusType,
+} from '../types/index.ts';
 
 // ── User-Role-Based Sequential Product ID Generation ──
 // Thread-safe: each role/cashier generates IDs under their own unique prefix

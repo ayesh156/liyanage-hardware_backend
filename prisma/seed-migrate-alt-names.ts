@@ -21,7 +21,7 @@
  */
 
 import 'dotenv/config';
-import { prisma } from '../src/lib/prisma.js';
+import { prisma } from '../src/lib/prisma.ts';
 
 async function main() {
   console.log('[MIGRATE-ALT-NAMES] 🚀 Starting safe raw data migration...\n');

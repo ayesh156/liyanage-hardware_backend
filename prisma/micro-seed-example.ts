@@ -24,7 +24,7 @@
  * Cashier custom products and sales records are 100% untouched.
  */
 
-import prisma from '../src/lib/prisma.js';
+import prisma from '../src/lib/prisma.ts';
 
 async function main() {
   console.log('🚀 Starting micro-seed (safe, non-destructive)...');

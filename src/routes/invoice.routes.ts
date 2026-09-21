@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { InvoiceController } from '../controllers/invoice.controller.js';
-import { authMiddleware, requireAdmin } from '../middlewares/auth.middleware.js';
+import { InvoiceController } from '../controllers/invoice.controller.ts';
+import { authMiddleware, requireAdmin } from '../middlewares/auth.middleware.ts';
 
 const router = Router();
 

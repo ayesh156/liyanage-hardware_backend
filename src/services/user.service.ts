@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
-import prisma from '../lib/prisma.js';
-import { AppError } from '../utils/appError.js';
+import prisma from '../lib/prisma.ts';
+import { AppError } from '../utils/appError.ts';
 
 const SALT_ROUNDS = 10;
 

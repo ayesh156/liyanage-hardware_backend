@@ -1,5 +1,5 @@
-import { Request, Response, NextFunction } from 'express';
-import { AuthService } from '../services/auth.service.js';
+import type { Request, Response, NextFunction } from 'express';
+import { AuthService } from '../services/auth.service.ts';
 
 /**
  * POST /api/auth/login
