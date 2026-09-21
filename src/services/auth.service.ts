@@ -19,6 +19,12 @@ interface LoginResult {
 }
 
 const JWT_SECRET: string = process.env.JWT_SECRET || 'liyanage-hardware-jwt-secret-change-in-production';
+console.log('AUTH SERVICE JWT SECRET LOADED:', Boolean(process.env.JWT_SECRET));
+console.log('AUTH SIGN SECRET LENGTH:', JWT_SECRET.length);
+console.log(
+  'AUTH SIGN SECRET FINGERPRINT:',
+  Buffer.from(JWT_SECRET).toString('base64').slice(0, 8)
+);
 const JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || '7d';
 // Cast to any to avoid strict overload issues with jwt types and ms library
 const JWT_SIGN_OPTIONS = { expiresIn: JWT_EXPIRES_IN } as any;
@@ -79,6 +85,11 @@ export class AuthService {
    * Throws if the token is invalid or expired.
    */
   static verifyToken(token: string): { userId: number; role: string } {
+  try {
     return jwt.verify(token, JWT_SECRET) as { userId: number; role: string };
+  } catch (error) {
+    console.error('JWT VERIFY ERROR:', error);
+    throw error;
   }
+}
 }

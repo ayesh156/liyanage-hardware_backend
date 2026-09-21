@@ -57,16 +57,16 @@ export const logout = async (_req: Request, res: Response) => {
 export const me = async (req: Request, res: Response, next: NextFunction) => {
   try {
     // Extract token from cookie or Authorization header
-    let token: string | undefined;
+   let token: string | undefined;
 
-    if (req.cookies && req.cookies.auth_token) {
-      token = req.cookies.auth_token;
-    } else {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        token = authHeader.split(' ')[1];
-      }
-    }
+const authHeader = req.headers.authorization;
+if (authHeader && authHeader.startsWith('Bearer ')) {
+  token = authHeader.split(' ')[1];
+}
+
+if (!token && req.cookies && req.cookies.auth_token) {
+  token = req.cookies.auth_token;
+}
 
     if (!token) {
       res.status(401).json({ success: false, error: 'Not authenticated' });
@@ -74,7 +74,7 @@ export const me = async (req: Request, res: Response, next: NextFunction) => {
     }
 
     const decoded = AuthService.verifyToken(token);
-    const { prisma } = await import('../lib/prisma.js');
+    const { prisma } = await import('../lib/prisma.ts');
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
