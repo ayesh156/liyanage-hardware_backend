@@ -95,8 +95,24 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// 📦 Static Asset Pipeline (/public -> backend/public)
-app.use('/public', express.static(publicDir));
+// 📦 Static Asset Pipeline (/public -> backend/public) with Cross-Origin Static Access
+app.use(
+  '/public',
+  cors({
+    origin: '*',
+    methods: ['GET', 'HEAD', 'OPTIONS'],
+    credentials: false,
+  }),
+  express.static(publicDir, {
+    maxAge: '1d',
+    setHeaders: (res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  })
+);
 
 // 🛡️ API Rate Limiter (DDoS & Database Connection Exhaustion Shield)
 const apiRateLimiter = rateLimit({
