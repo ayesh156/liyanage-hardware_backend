@@ -1,3 +1,7 @@
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
 import prisma from '../lib/prisma.ts';
 import { AppError } from '../utils/appError.ts';
 import { generateSequentialId } from '../utils/idGenerator.ts';
@@ -7,6 +11,129 @@ import {
   type UpdateCategoryInput,
   type BulkCategoryDisplayInput,
 } from '../types/index.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PUBLIC_DIR = path.resolve(__dirname, '../../public');
+const CATEGORY_IMG_DIR = path.join(PUBLIC_DIR, 'category-img');
+
+/**
+ * Converts a category name string into an alphanumeric URL-safe slug.
+ * Falls back to 'category' if the resulting slug is empty.
+ *
+ * @param name - The category name in English or transliterated
+ * @returns Lowercase alphanumeric slug with hyphens
+ */
+export function slugifyCategoryName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)+/g, '');
+  return slug || 'category';
+}
+
+/**
+ * Safely unlinks a local category image file from public/category-img/ if it exists.
+ * External URLs (http://, https://) and null/empty paths are safely ignored without deletion.
+ *
+ * @param imageUrl - Stored image URL or local static path
+ */
+export async function safelyDeleteLocalCategoryImg(imageUrl?: string | null): Promise<void> {
+  if (!imageUrl || typeof imageUrl !== 'string') return;
+
+  // Only perform local disk deletion if it points to /public/category-img/
+  if (imageUrl.startsWith('/public/category-img/') || imageUrl.startsWith('public/category-img/')) {
+    const filename = path.basename(imageUrl);
+    if (!filename || filename === '.' || filename === '..') return;
+
+    const filePath = path.join(CATEGORY_IMG_DIR, filename);
+    try {
+      await fs.promises.unlink(filePath);
+      console.log(`[CategoryImage] Unlinked obsolete image file: ${filePath}`);
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        console.warn(`[CategoryImage] Could not delete image ${filePath}:`, err.message);
+      }
+    }
+  }
+}
+
+/**
+ * Processes and persists category image inputs (Base64 data URLs or raw buffer payloads).
+ * Generates a unique WebP image filename formatted as `${slug}-${crypto.randomBytes(4).toString('hex')}.webp`.
+ * If the input is already an external URL (http://, https://), validates and returns it unmodified.
+ *
+ * @param categoryName - The category name for slugification
+ * @param imageInput - Base64 Data URL, binary buffer, or external HTTPS URL string
+ * @returns The accessible relative path (`/public/category-img/...`) or original URL, or null
+ */
+export async function persistCategoryImage(
+  categoryName: string,
+  imageInput?: string | Buffer | null,
+): Promise<string | null> {
+  if (!imageInput) return null;
+
+  // If Buffer is provided directly (e.g. from multipart file upload)
+  if (Buffer.isBuffer(imageInput)) {
+    if (imageInput.length === 0) return null;
+    if (!fs.existsSync(CATEGORY_IMG_DIR)) {
+      await fs.promises.mkdir(CATEGORY_IMG_DIR, { recursive: true, mode: 0o755 });
+    }
+    const slug = slugifyCategoryName(categoryName);
+    const randomHex = crypto.randomBytes(4).toString('hex');
+    const filename = `${slug}-${randomHex}.webp`;
+    const filePath = path.join(CATEGORY_IMG_DIR, filename);
+    await fs.promises.writeFile(filePath, imageInput, { mode: 0o755 });
+    return `/public/category-img/${filename}`;
+  }
+
+  if (typeof imageInput !== 'string') return null;
+  const trimmed = imageInput.trim();
+  if (!trimmed) return null;
+
+  // External URL or existing static path -> pass through
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('/public/category-img/')
+  ) {
+    return trimmed;
+  }
+
+  // Base64 Data URL (e.g. data:image/webp;base64,xxxx or raw base64)
+  if (
+    trimmed.startsWith('data:image/') ||
+    /^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$/.test(trimmed.slice(0, 100))
+  ) {
+    try {
+      let base64Data = trimmed;
+      if (trimmed.includes(',')) {
+        base64Data = trimmed.split(',')[1];
+      }
+      const buffer = Buffer.from(base64Data, 'base64');
+      if (buffer.length === 0) return null;
+
+      if (!fs.existsSync(CATEGORY_IMG_DIR)) {
+        await fs.promises.mkdir(CATEGORY_IMG_DIR, { recursive: true, mode: 0o755 });
+      }
+
+      const slug = slugifyCategoryName(categoryName);
+      const randomHex = crypto.randomBytes(4).toString('hex');
+      const filename = `${slug}-${randomHex}.webp`;
+      const filePath = path.join(CATEGORY_IMG_DIR, filename);
+
+      await fs.promises.writeFile(filePath, buffer, { mode: 0o755 });
+      console.log(`[CategoryImage] Persisted category image to ${filePath}`);
+
+      return `/public/category-img/${filename}`;
+    } catch (err: any) {
+      console.error(`[CategoryImage] Failed to save base64 category image:`, err);
+      throw new AppError(`Failed to persist category image: ${err.message}`, 500);
+    }
+  }
+
+  return trimmed;
+}
 
 /**
  * Maps a Prisma category record to CategoryDTO.
@@ -83,6 +210,7 @@ export class CategoryService {
   /**
    * POST /api/categories
    * Generates a role-prefixed sequential 6-digit ID (e.g. cata-000001, catc1-000001).
+   * Persists any Base64 image payload to public/category-img/${slug}-${random}.webp
    */
   static async create(
     input: CreateCategoryInput & { currentUser?: { role?: string; username?: string } },
@@ -102,13 +230,16 @@ export class CategoryService {
     // Generate sequential role-based ID
     const id = await generateSequentialId('category', input.currentUser);
 
+    // Process and persist category image if provided
+    const processedImageUrl = await persistCategoryImage(input.name.trim(), input.imageUrl);
+
     const item = await prisma.category.create({
       data: {
         id,
         name: input.name.trim(),
         nameSinhala: input.nameSinhala ?? null,
         icon: input.icon ?? null,
-        imageUrl: input.imageUrl ?? null,
+        imageUrl: processedImageUrl,
         description: input.description ?? null,
         sortOrder: input.sortOrder ?? 0,
         showInQuickInvoice: input.showInQuickInvoice ?? true,
@@ -120,7 +251,8 @@ export class CategoryService {
 
   /**
    * PUT /api/categories/:id
-   * Updates an existing category. Handles imageUrl as string, URL, or null cleanly.
+   * Updates an existing category. Handles imageUrl as string, URL, base64, or null cleanly.
+   * Cleans up obsolete local images from public/category-img/ on update.
    */
   static async update(id: string, input: UpdateCategoryInput): Promise<CategoryDTO> {
     const existing = await prisma.category.findUnique({ where: { id } });
@@ -142,9 +274,21 @@ export class CategoryService {
     if (input.name !== undefined) updateData.name = input.name.trim();
     if (input.nameSinhala !== undefined) updateData.nameSinhala = input.nameSinhala;
     if (input.icon !== undefined) updateData.icon = input.icon;
+    
     if (input.imageUrl !== undefined) {
-      updateData.imageUrl = input.imageUrl === '' ? null : (input.imageUrl ?? null);
+      const categoryNameForSlug = input.name || existing.name;
+      if (!input.imageUrl || input.imageUrl.trim() === '') {
+        await safelyDeleteLocalCategoryImg(existing.imageUrl);
+        updateData.imageUrl = null;
+      } else {
+        const newImageUrl = await persistCategoryImage(categoryNameForSlug, input.imageUrl);
+        if (existing.imageUrl && existing.imageUrl !== newImageUrl) {
+          await safelyDeleteLocalCategoryImg(existing.imageUrl);
+        }
+        updateData.imageUrl = newImageUrl;
+      }
     }
+
     if (input.description !== undefined) updateData.description = input.description;
     if (input.sortOrder !== undefined) updateData.sortOrder = input.sortOrder;
     if (input.showInQuickInvoice !== undefined) updateData.showInQuickInvoice = input.showInQuickInvoice;
@@ -187,8 +331,8 @@ export class CategoryService {
 
   /**
    * DELETE /api/categories/:id
-   * Safely unassigns dependent products (sets categoryId and categorySi to null)
-   * before deleting the category record.
+   * Safely unassigns dependent products (sets categoryId and categorySi to null),
+   * unlinks obsolete local image files, before deleting the category record.
    */
   static async delete(id: string): Promise<void> {
     const existing = await prisma.category.findUnique({
@@ -213,13 +357,19 @@ export class CategoryService {
       data: { categoryId: null, categorySi: null },
     });
 
-    // Step B: Delete the standalone category record
+    // Step B: Unlink local category image if it exists
+    if (existing.imageUrl) {
+      await safelyDeleteLocalCategoryImg(existing.imageUrl);
+    }
+
+    // Step C: Delete the standalone category record
     await prisma.category.delete({ where: { id } });
   }
 
   /**
    * PATCH /api/categories/:id
    * Partial update for a single category (inline editing).
+   * Manages image persistence and unlinks old local files on replacement.
    */
   static async patch(id: string, input: Record<string, any>): Promise<CategoryDTO> {
     const existing = await prisma.category.findUnique({ where: { id } });
@@ -228,7 +378,7 @@ export class CategoryService {
     }
 
     const patchableFields = [
-      'name', 'nameSinhala', 'icon', 'imageUrl', 'description',
+      'name', 'nameSinhala', 'icon', 'description',
       'sortOrder', 'showInQuickInvoice',
     ];
 
@@ -248,6 +398,21 @@ export class CategoryService {
         throw new AppError(`Category "${updateData.name}" already exists`, 409);
       }
       updateData.name = updateData.name.trim();
+    }
+
+    // Handle image update in patch
+    if (input.imageUrl !== undefined) {
+      const categoryNameForSlug = updateData.name || existing.name;
+      if (!input.imageUrl || String(input.imageUrl).trim() === '') {
+        await safelyDeleteLocalCategoryImg(existing.imageUrl);
+        updateData.imageUrl = null;
+      } else {
+        const newImageUrl = await persistCategoryImage(categoryNameForSlug, input.imageUrl);
+        if (existing.imageUrl && existing.imageUrl !== newImageUrl) {
+          await safelyDeleteLocalCategoryImg(existing.imageUrl);
+        }
+        updateData.imageUrl = newImageUrl;
+      }
     }
 
     if (Object.keys(updateData).length === 0) {

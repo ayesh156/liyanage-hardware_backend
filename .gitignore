@@ -33,3 +33,9 @@ build/
 .env.local
 .env.production
 .cache/
+
+# Ignore all uploaded category images
+public/category-img/*
+
+# Keep the folder structure tracked via .gitkeep
+!public/category-img/.gitkeep

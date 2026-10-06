@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import http from 'http';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
@@ -10,6 +11,18 @@ import router from './routes/index.ts';
 import { errorHandler } from './middlewares/errorHandler.middleware.ts';
 // 🌟 අලුත් SSE router එක import කිරීම
 import { syncRouter } from './gateways/checkoutSync.gateway.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ── Static Asset Serving & Category Uploads Setup ────────────
+const publicDir = path.resolve(__dirname, '../public');
+const categoryImgDir = path.join(publicDir, 'category-img');
+
+if (!fs.existsSync(categoryImgDir)) {
+  fs.mkdirSync(categoryImgDir, { recursive: true, mode: 0o755 });
+  console.log(`📁 Initialized static category image directory: ${categoryImgDir}`);
+}
 
 // 📁 .env Load & Terminal Path Inspection
 const envPaths = [
@@ -81,6 +94,9 @@ import rateLimit from 'express-rate-limit';
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// 📦 Static Asset Pipeline (/public -> backend/public)
+app.use('/public', express.static(publicDir));
 
 // 🛡️ API Rate Limiter (DDoS & Database Connection Exhaustion Shield)
 const apiRateLimiter = rateLimit({
