@@ -13,7 +13,7 @@ export type SalesType = 'Full' | 'Half' | 'Quarter' | 'Piece' | 'Kg' | 'Box' | '
 
 export interface ProductDTO {
   id: string;
-  no: string;
+  no?: string | null;
   searchKey: string;
   name: string;
   nameSi?: string;
@@ -93,7 +93,7 @@ export interface CategoryDTO {
   name: string;
   nameSinhala?: string;
   icon?: string;
-  imageUrl?: string;
+  imageUrl?: string | null;
   description?: string;
   usageCount?: number;
   sortOrder: number;
@@ -106,7 +106,7 @@ export interface CreateCategoryInput {
   name: string;
   nameSinhala?: string;
   icon?: string;
-  imageUrl?: string;
+  imageUrl?: string | null;
   description?: string;
   sortOrder?: number;
   showInQuickInvoice?: boolean;

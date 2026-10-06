@@ -107,7 +107,7 @@ model Category {
 /// Stores flat, denormalized records with bilingual (Sinhala) support.
 model Product {
   id              String        @id @default(uuid())
-  no              String        @db.VarChar(6)   // Sequential 6-char number (e.g. "1000", "1001")
+  no              String?       @db.VarChar(6)   // Sequential 6-char number (e.g. "1000", "1001") — optional for legacy inventory records
   searchKey       String                        // Primary search field (e.g. "ACL BOX 3x3x2/4")
   name            String                        // Product name (English)
   nameSinhala     String?                       // Product name (Sinhala) — unified mapping

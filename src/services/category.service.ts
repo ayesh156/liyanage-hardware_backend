@@ -8,13 +8,17 @@ import {
   type BulkCategoryDisplayInput,
 } from '../types/index.ts';
 
+/**
+ * Maps a Prisma category record to CategoryDTO.
+ * Supports string, URL, or null/undefined for imageUrl.
+ */
 function toDTO(record: any): CategoryDTO {
   return {
     id: record.id,
     name: record.name,
     nameSinhala: record.nameSinhala ?? undefined,
     icon: record.icon ?? undefined,
-    imageUrl: record.imageUrl ?? undefined,
+    imageUrl: record.imageUrl ?? null,
     description: record.description ?? undefined,
     usageCount: record.usageCount ?? 0,
     sortOrder: record.sortOrder ?? 0,
@@ -116,6 +120,7 @@ export class CategoryService {
 
   /**
    * PUT /api/categories/:id
+   * Updates an existing category. Handles imageUrl as string, URL, or null cleanly.
    */
   static async update(id: string, input: UpdateCategoryInput): Promise<CategoryDTO> {
     const existing = await prisma.category.findUnique({ where: { id } });
@@ -137,7 +142,9 @@ export class CategoryService {
     if (input.name !== undefined) updateData.name = input.name.trim();
     if (input.nameSinhala !== undefined) updateData.nameSinhala = input.nameSinhala;
     if (input.icon !== undefined) updateData.icon = input.icon;
-    if (input.imageUrl !== undefined) updateData.imageUrl = input.imageUrl;
+    if (input.imageUrl !== undefined) {
+      updateData.imageUrl = input.imageUrl === '' ? null : (input.imageUrl ?? null);
+    }
     if (input.description !== undefined) updateData.description = input.description;
     if (input.sortOrder !== undefined) updateData.sortOrder = input.sortOrder;
     if (input.showInQuickInvoice !== undefined) updateData.showInQuickInvoice = input.showInQuickInvoice;
