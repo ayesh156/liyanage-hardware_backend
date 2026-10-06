@@ -1,7 +1,6 @@
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { fileURLToPath } from 'url';
 import prisma from '../lib/prisma.ts';
 import { AppError } from '../utils/appError.ts';
 import { generateSequentialId } from '../utils/idGenerator.ts';
@@ -12,10 +11,8 @@ import {
   type BulkCategoryDisplayInput,
 } from '../types/index.ts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PUBLIC_DIR = path.resolve(__dirname, '../../public');
-const CATEGORY_IMG_DIR = path.join(PUBLIC_DIR, 'category-img');
+const BASE_PUBLIC_DIR = path.resolve(process.cwd(), 'public');
+const CATEGORY_IMG_DIR = path.join(BASE_PUBLIC_DIR, 'category-img');
 
 /**
  * Converts a category name string into an alphanumeric URL-safe slug.
@@ -76,15 +73,16 @@ export async function persistCategoryImage(
   // If Buffer is provided directly (e.g. from multipart file upload)
   if (Buffer.isBuffer(imageInput)) {
     if (imageInput.length === 0) return null;
-    if (!fs.existsSync(CATEGORY_IMG_DIR)) {
-      await fs.promises.mkdir(CATEGORY_IMG_DIR, { recursive: true, mode: 0o755 });
-    }
     const slug = slugifyCategoryName(categoryName);
     const randomHex = crypto.randomBytes(4).toString('hex');
-    const filename = `${slug}-${randomHex}.webp`;
-    const filePath = path.join(CATEGORY_IMG_DIR, filename);
-    await fs.promises.writeFile(filePath, imageInput, { mode: 0o755 });
-    return `/public/category-img/${filename}`;
+    const fileName = `${slug}-${randomHex}.webp`;
+    const targetPath = path.join(CATEGORY_IMG_DIR, fileName);
+
+    await fs.promises.mkdir(CATEGORY_IMG_DIR, { recursive: true });
+    await fs.promises.writeFile(targetPath, imageInput);
+    console.log(`[CategoryImage] Persisted category image buffer to ${targetPath}`);
+
+    return `/public/category-img/${fileName}`;
   }
 
   if (typeof imageInput !== 'string') return null;
@@ -113,19 +111,16 @@ export async function persistCategoryImage(
       const buffer = Buffer.from(base64Data, 'base64');
       if (buffer.length === 0) return null;
 
-      if (!fs.existsSync(CATEGORY_IMG_DIR)) {
-        await fs.promises.mkdir(CATEGORY_IMG_DIR, { recursive: true, mode: 0o755 });
-      }
-
       const slug = slugifyCategoryName(categoryName);
       const randomHex = crypto.randomBytes(4).toString('hex');
-      const filename = `${slug}-${randomHex}.webp`;
-      const filePath = path.join(CATEGORY_IMG_DIR, filename);
+      const fileName = `${slug}-${randomHex}.webp`;
+      const targetPath = path.join(CATEGORY_IMG_DIR, fileName);
 
-      await fs.promises.writeFile(filePath, buffer, { mode: 0o755 });
-      console.log(`[CategoryImage] Persisted category image to ${filePath}`);
+      await fs.promises.mkdir(CATEGORY_IMG_DIR, { recursive: true });
+      await fs.promises.writeFile(targetPath, buffer);
+      console.log(`[CategoryImage] Persisted category image to ${targetPath}`);
 
-      return `/public/category-img/${filename}`;
+      return `/public/category-img/${fileName}`;
     } catch (err: any) {
       console.error(`[CategoryImage] Failed to save base64 category image:`, err);
       throw new AppError(`Failed to persist category image: ${err.message}`, 500);

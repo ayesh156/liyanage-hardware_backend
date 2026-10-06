@@ -16,7 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ── Static Asset Serving & Category Uploads Setup ────────────
-const publicDir = path.resolve(__dirname, '../public');
+const publicDir = path.resolve(process.cwd(), 'public');
 const categoryImgDir = path.join(publicDir, 'category-img');
 
 if (!fs.existsSync(categoryImgDir)) {
