@@ -14,6 +14,7 @@ function toDTO(record: any): CategoryDTO {
     name: record.name,
     nameSinhala: record.nameSinhala ?? undefined,
     icon: record.icon ?? undefined,
+    imageUrl: record.imageUrl ?? undefined,
     description: record.description ?? undefined,
     usageCount: record.usageCount ?? 0,
     sortOrder: record.sortOrder ?? 0,
@@ -103,6 +104,7 @@ export class CategoryService {
         name: input.name.trim(),
         nameSinhala: input.nameSinhala ?? null,
         icon: input.icon ?? null,
+        imageUrl: input.imageUrl ?? null,
         description: input.description ?? null,
         sortOrder: input.sortOrder ?? 0,
         showInQuickInvoice: input.showInQuickInvoice ?? true,
@@ -135,6 +137,7 @@ export class CategoryService {
     if (input.name !== undefined) updateData.name = input.name.trim();
     if (input.nameSinhala !== undefined) updateData.nameSinhala = input.nameSinhala;
     if (input.icon !== undefined) updateData.icon = input.icon;
+    if (input.imageUrl !== undefined) updateData.imageUrl = input.imageUrl;
     if (input.description !== undefined) updateData.description = input.description;
     if (input.sortOrder !== undefined) updateData.sortOrder = input.sortOrder;
     if (input.showInQuickInvoice !== undefined) updateData.showInQuickInvoice = input.showInQuickInvoice;
@@ -218,7 +221,7 @@ export class CategoryService {
     }
 
     const patchableFields = [
-      'name', 'nameSinhala', 'icon', 'description',
+      'name', 'nameSinhala', 'icon', 'imageUrl', 'description',
       'sortOrder', 'showInQuickInvoice',
     ];
 

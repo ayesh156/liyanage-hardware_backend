@@ -93,6 +93,7 @@ export interface CategoryDTO {
   name: string;
   nameSinhala?: string;
   icon?: string;
+  imageUrl?: string;
   description?: string;
   usageCount?: number;
   sortOrder: number;
@@ -105,6 +106,7 @@ export interface CreateCategoryInput {
   name: string;
   nameSinhala?: string;
   icon?: string;
+  imageUrl?: string;
   description?: string;
   sortOrder?: number;
   showInQuickInvoice?: boolean;
@@ -114,6 +116,7 @@ export interface UpdateCategoryInput {
   name?: string;
   nameSinhala?: string;
   icon?: string;
+  imageUrl?: string | null;
   description?: string;
   sortOrder?: number;
   showInQuickInvoice?: boolean;

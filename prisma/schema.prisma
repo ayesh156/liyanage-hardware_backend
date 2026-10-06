@@ -88,6 +88,7 @@ model Category {
   name               String             @unique
   nameSinhala        String?                         // Sinhala name (unified mapping)
   icon               String?
+  imageUrl           String?            @db.Text
   description        String?            @db.Text
   usageCount         Int                @default(0)
   sortOrder          Int                @default(0)  // Custom display ordering
