@@ -30,23 +30,33 @@ export function slugifyCategoryName(name: string): string {
 }
 
 /**
- * Safely unlinks a local category image file from public/category-img/ if it exists.
- * External URLs (http://, https://) and null/empty paths are safely ignored without deletion.
+ * Safely unlinks an obsolete local category image file from disk (`/public/category-img/`).
+ * 
+ * Cleanup Mechanism:
+ * - When a category image is updated (e.g. replaced with a new Base64 upload, updated with an external
+ *   Web URL / Google Drive link, or cleared to null) or when a category is deleted, this function inspects
+ *   the previous `imageUrl`.
+ * - If the previous URL points to a local static image file stored under `/public/category-img/`, it resolves
+ *   the absolute path inside `process.cwd()/public/category-img/` and removes the file via `fs.promises.unlink`.
+ * - External URLs (`http://`, `https://`) and null/undefined values are safely bypassed with zero disk operations.
  *
- * @param imageUrl - Stored image URL or local static path
+ * @param imageUrl - Stored image URL or local static path (e.g. `/public/category-img/tools-a1b2c3d4.webp`)
  */
 export async function safelyDeleteLocalCategoryImg(imageUrl?: string | null): Promise<void> {
   if (!imageUrl || typeof imageUrl !== 'string') return;
 
   // Only perform local disk deletion if it points to /public/category-img/
   if (imageUrl.startsWith('/public/category-img/') || imageUrl.startsWith('public/category-img/')) {
-    const filename = path.basename(imageUrl);
+    const rawPath = imageUrl.split('?')[0];
+    const filename = path.basename(rawPath);
     if (!filename || filename === '.' || filename === '..') return;
 
     const filePath = path.join(CATEGORY_IMG_DIR, filename);
     try {
-      await fs.promises.unlink(filePath);
-      console.log(`[CategoryImage] Unlinked obsolete image file: ${filePath}`);
+      if (fs.existsSync(filePath)) {
+        await fs.promises.unlink(filePath);
+        console.log(`[CategoryImage] Unlinked obsolete local image file: ${filePath}`);
+      }
     } catch (err: any) {
       if (err.code !== 'ENOENT') {
         console.warn(`[CategoryImage] Could not delete image ${filePath}:`, err.message);
@@ -56,13 +66,48 @@ export async function safelyDeleteLocalCategoryImg(imageUrl?: string | null): Pr
 }
 
 /**
- * Processes and persists category image inputs (Base64 data URLs or raw buffer payloads).
- * Generates a unique WebP image filename formatted as `${slug}-${crypto.randomBytes(4).toString('hex')}.webp`.
- * If the input is already an external URL (http://, https://), validates and returns it unmodified.
+ * Normalizes Google Drive shareable URLs into direct, CORS-friendly image CDN URLs on the backend.
+ *
+ * Google Drive share links format:
+ * - `https://drive.google.com/file/d/FILE_ID/view?usp=sharing`
+ * - `https://drive.google.com/open?id=FILE_ID`
+ * - `https://drive.google.com/uc?export=view&id=FILE_ID`
+ *
+ * Google Drive Share Link Normalization:
+ * - Google Drive share links cannot be rendered directly in HTML `<img>` tags due to Google permission
+ *   landing pages and CORS policies.
+ * - The regex `/(?:\/d\/|id=)([a-zA-Z0-9_-]{25,})/` extracts the unique Google Drive file ID
+ *   (25+ alphanumeric characters).
+ * - Transforms the link into the direct CDN image endpoint: `https://lh3.googleusercontent.com/d/${FILE_ID}`.
+ *
+ * @param url - Potential Google Drive link or standard image URL
+ * @returns Direct image URL formatted as `https://lh3.googleusercontent.com/d/${fileId}` or original URL
+ */
+export function normalizeGoogleDriveUrl(url?: string | null): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (
+    trimmed.includes('drive.google.com') ||
+    trimmed.includes('docs.google.com') ||
+    trimmed.includes('googleusercontent.com')
+  ) {
+    const match = trimmed.match(/(?:\/d\/|id=)([a-zA-Z0-9_-]{25,})/);
+    if (match && match[1]) {
+      return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+    }
+  }
+  return trimmed;
+}
+
+/**
+ * Processes and persists category image inputs (Base64 data URLs, raw buffer payloads, or Web URLs).
+ * - Base64 Data URL: Decoded, saved as `${slug}-${crypto.randomBytes(4).toString('hex')}.webp` in `public/category-img/`.
+ * - Web URL / Google Drive link: Normalizes Google Drive links to direct viewable CDN endpoints (`https://lh3.googleusercontent.com/d/...`).
+ * - Existing static path: Retained as is.
  *
  * @param categoryName - The category name for slugification
  * @param imageInput - Base64 Data URL, binary buffer, or external HTTPS URL string
- * @returns The accessible relative path (`/public/category-img/...`) or original URL, or null
+ * @returns The accessible relative path (`/public/category-img/...`) or normalized direct URL, or null
  */
 export async function persistCategoryImage(
   categoryName: string,
@@ -89,12 +134,16 @@ export async function persistCategoryImage(
   const trimmed = imageInput.trim();
   if (!trimmed) return null;
 
-  // External URL or existing static path -> pass through
+  // External URL -> auto-normalize Google Drive links if applicable
   if (
     trimmed.startsWith('http://') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('/public/category-img/')
+    trimmed.startsWith('https://')
   ) {
+    return normalizeGoogleDriveUrl(trimmed);
+  }
+
+  // Existing local static path -> pass through
+  if (trimmed.startsWith('/public/category-img/')) {
     return trimmed;
   }
 
