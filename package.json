@@ -11,7 +11,6 @@
     "start": "node src/main.ts",
     "start:prod": "node src/main.ts",
     "seed": "npx prisma db seed",
-    "seed2": "ts-node --project prisma/tsconfig.seed.json --esm prisma/seed2.ts",
     "postinstall": "npx prisma generate",
     "studio": "npx prisma studio"
   },

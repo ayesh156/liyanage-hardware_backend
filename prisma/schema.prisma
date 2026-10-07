@@ -169,14 +169,21 @@ model Customer {
   @@map("customers")
 }
 
-/// Supplier (matches frontend `Supplier` interface)
+/// Supplier — core supplier profile with starting and live balance tracking
 model Supplier {
-  id              String              @id @default(uuid())
+  id              String              @id @default(cuid())
   name            String
-  contactPerson   String              @default("")
-  email           String?
-  phone           String
+  companyName     String?
   address         String?             @db.Text
+  mobileNumber    String?
+  telephoneNumber String?
+  startingBalance Decimal             @default(0) @db.Decimal(12, 2)
+  currentBalance  Decimal             @default(0) @db.Decimal(12, 2)
+
+  // Preserved legacy fields for backward compatibility
+  contactPerson   String?             @default("")
+  email           String?
+  phone           String?
   brands          String?                            // JSON array
   categories      String?                            // JSON array
   paymentTerms    String?
@@ -186,16 +193,77 @@ model Supplier {
   creditLimit     Decimal?            @db.Decimal(12, 2)
   creditDueDate   DateTime?
   lastPaymentDate DateTime?
+
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
+  grns            GRN[]
+  settlements     SupplierSettlement[]
   deliveries      SupplierDelivery[]
 
   @@index([name])
+  @@index([companyName])
   @@map("suppliers")
 }
 
-/// Supplier delivery record (matches frontend `SupplierDelivery` interface)
+/// Goods Received Note (GRN) — Tracks incoming stock deliveries and payment dues
+model GRN {
+  id          String               @id @default(cuid())
+  grnNumber   String               @unique
+  supplierId  String
+  supplier    Supplier             @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  totalAmount Decimal              @db.Decimal(12, 2)
+  paidAmount  Decimal              @default(0) @db.Decimal(12, 2)
+  dueAmount   Decimal              @default(0) @db.Decimal(12, 2)
+  status      String               @default("DUE") // "PAID", "PARTIAL", "DUE"
+  images      Json?                // Array of image records (local uploads + Google Drive CDN links)
+  notes       String?              @db.Text
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  items       GRNItem[]
+  settlements SupplierSettlement[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("grns")
+}
+
+/// Optional Itemized breakdown for a GRN
+model GRNItem {
+  id        String   @id @default(cuid())
+  grnId     String
+  grn       GRN      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  name      String
+  unitPrice Decimal  @db.Decimal(12, 2)
+  qty       Decimal  @db.Decimal(12, 2)
+  subtotal  Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+
+  @@index([grnId])
+  @@map("grn_items")
+}
+
+/// Supplier Settlement / Payment Log — records payment movements and updates live balances
+model SupplierSettlement {
+  id            String   @id @default(cuid())
+  supplierId    String
+  supplier      Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  grnId         String?
+  grn           GRN?     @relation(fields: [grnId], references: [id], onDelete: SetNull)
+  amount        Decimal  @db.Decimal(12, 2)
+  paymentMethod String   @default("CASH") // "CASH", "CHEQUE", "BANK_TRANSFER"
+  note          String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  @@index([supplierId])
+  @@index([grnId])
+  @@index([createdAt])
+  @@map("supplier_settlements")
+}
+
+/// Supplier delivery record (matches legacy frontend `SupplierDelivery` interface)
 model SupplierDelivery {
   id            String   @id @default(uuid())
   supplierId    String

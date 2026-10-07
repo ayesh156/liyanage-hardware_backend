@@ -36,6 +36,8 @@ build/
 
 # Ignore all uploaded category images
 public/category-img/*
+public/grn-img/*
 
 # Keep the folder structure tracked via .gitkeep
 !public/category-img/.gitkeep
+!public/grn-img/.gitkeep

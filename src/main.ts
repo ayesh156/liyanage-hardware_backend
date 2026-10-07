@@ -18,10 +18,15 @@ const __dirname = path.dirname(__filename);
 // ── Static Asset Serving & Category Uploads Setup ────────────
 const publicDir = path.resolve(process.cwd(), 'public');
 const categoryImgDir = path.join(publicDir, 'category-img');
+const grnImgDir = path.join(publicDir, 'grn-img');
 
 if (!fs.existsSync(categoryImgDir)) {
   fs.mkdirSync(categoryImgDir, { recursive: true, mode: 0o755 });
   console.log(`📁 Initialized static category image directory: ${categoryImgDir}`);
+}
+if (!fs.existsSync(grnImgDir)) {
+  fs.mkdirSync(grnImgDir, { recursive: true, mode: 0o755 });
+  console.log(`📁 Initialized static GRN image directory: ${grnImgDir}`);
 }
 
 // 📁 .env Load & Terminal Path Inspection
