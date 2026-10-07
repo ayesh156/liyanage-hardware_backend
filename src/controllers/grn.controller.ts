@@ -179,12 +179,18 @@ export const GRNController = {
       throw new AppError('No image files provided for upload', 400);
     }
 
-    const uploaded = files.map((f) => ({
-      url: `/public/grn-img/${f.filename}`,
-      name: f.originalname,
-      source: 'upload',
-      size: f.size,
-    }));
+    const uploaded = files.map((f) => {
+      const isPdf = f.mimetype === 'application/pdf' || path.extname(f.originalname).toLowerCase() === '.pdf';
+      return {
+        url: `/public/grn-img/${f.filename}`,
+        name: f.originalname,
+        source: 'upload',
+        size: f.size,
+        mimeType: f.mimetype || (isPdf ? 'application/pdf' : undefined),
+        fileType: isPdf ? 'pdf' : 'image',
+        isPdf: isPdf,
+      };
+    });
 
     res.status(200).json({
       success: true,

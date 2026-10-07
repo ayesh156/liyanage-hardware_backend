@@ -7,6 +7,7 @@ import invoiceRouter from './invoice.routes.ts';
 import userRouter from './user.routes.ts';
 import supplierRouter from './supplier.routes.ts';
 import grnRouter from './grn.routes.ts';
+import reportRouter from './report.routes.ts';
 
 const router = Router();
 
@@ -29,5 +30,6 @@ router.use('/invoices', invoiceRouter);
 router.use('/users', userRouter);
 router.use('/suppliers', supplierRouter);
 router.use('/grns', grnRouter);
+router.use('/reports', reportRouter);
 
 export default router;
