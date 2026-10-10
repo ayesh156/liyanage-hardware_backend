@@ -15,6 +15,7 @@ function toDTO(record: any): CustomerDTO {
     address: record.address ?? undefined,
     customerType: record.customerType as CustomerDTO['customerType'],
     loanBalance: Number(record.loanBalance),
+    dueBalance: Number(record.loanBalance),
     creditLimit: record.creditLimit ? Number(record.creditLimit) : undefined,
   };
 }
@@ -123,9 +124,73 @@ export class CustomerService {
    * GET /api/customers/:id
    */
   static async getById(id: string): Promise<CustomerDTO> {
+    // Dynamically recalculate and persist true due balance from pending invoices
+    await CustomerService.recalculateCustomerDueBalance(id);
     const item = await prisma.customer.findUnique({ where: { id } });
     if (!item) throw new AppError('Customer not found', 404);
     return toDTO(item);
+  }
+
+  /**
+   * Recalculates and persists a customer's live due balance by dynamically aggregating
+   * all outstanding (non-paid) invoices for the customer.
+   *
+   * Formula:
+   * customer.dueBalance = sum(invoices.filter(inv => inv.customerId === id && inv.status !== 'paid')
+   *                              .map(inv => inv.dueAmount || inv.total - inv.paidAmount))
+   *
+   * @param customerId - Target customer unique ID
+   * @param tx - Optional Prisma transaction client
+   * @returns The newly computed and persisted dueBalance
+   */
+  static async recalculateCustomerDueBalance(customerId: string, tx?: any): Promise<number> {
+    if (!customerId || customerId === 'walk-in' || customerId === 'default-customer') {
+      return 0;
+    }
+
+    const db = tx || prisma;
+
+    const customerExists = await db.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true },
+    });
+    if (!customerExists) return 0;
+
+    // Fetch all non-paid and non-cancelled invoices for this customer
+    const pendingInvoices = await db.invoice.findMany({
+      where: {
+        customerId,
+        status: { notIn: ['paid', 'cancelled'] },
+      },
+      select: {
+        id: true,
+        total: true,
+        receivedAmount: true,
+        status: true,
+      },
+    });
+
+    // Dynamic aggregation of remaining due balances:
+    // inv.dueAmount = Math.max(0, inv.total - inv.paidAmount)
+    const trueDueBalance = pendingInvoices.reduce((sum: number, inv: any) => {
+      const total = parseFloat(String(inv.total || 0));
+      const paid = parseFloat(String(inv.receivedAmount || 0));
+      const due = Math.max(0, total - paid);
+      return sum + due;
+    }, 0);
+
+    const roundedDue = Math.round(trueDueBalance * 100) / 100;
+
+    // Persist the synchronized total on the Customer document
+    await db.customer.update({
+      where: { id: customerId },
+      data: {
+        loanBalance: roundedDue,
+        updatedAt: colomboNow(),
+      },
+    });
+
+    return roundedDue;
   }
 
   /**

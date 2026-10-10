@@ -5,6 +5,7 @@ import prisma from '../lib/prisma.ts';
 import { AppError } from '../utils/appError.ts';
 import { colomboNow } from '../utils/dateUtils.ts';
 import { type InvoiceDTO, type InvoiceItemDTO, type PaginatedResult } from '../types/index.ts';
+import { CustomerService } from './customer.service.ts';
 
 // ── Deterministic Time-Sortable InvoiceItem IDs (ZERO-MIGRATION ORDER FIX) ──
 // The InvoiceItem schema stores its primary key as a random UUID v4 string.
@@ -464,25 +465,41 @@ async function syncInvoiceItems(tx: any, invoiceId: string, incomingItems: any[]
   }
 }
 
-// ── Helper: Determine if credit/debt should be applied ──
+/**
+ * Helper: Determine if credit/debt should be applied to customer loan balance.
+ * Explicitly parses tender so 0 or empty values are treated as 0 tender (not full payment).
+ *
+ * @param input - Invoice calculation inputs including paymentMethod, receivedAmount, total, and customerId
+ * @returns boolean indicating whether credit transaction should be recorded
+ */
 function shouldApplyCredit(input: {
   paymentMethod?: string;
-  receivedAmount?: number;
+  receivedAmount?: number | string | null;
   total: number;
   customerId?: string;
 }): boolean {
   if (!input.customerId) return false;
   const paymentMethod = (input.paymentMethod || 'cash').toLowerCase();
-  const receivedAmount = input.receivedAmount ?? input.total;
-  const total = input.total;
-  const remainingCreditDebt = total - receivedAmount;
+  const tender = (input.receivedAmount === '' || input.receivedAmount === null || input.receivedAmount === undefined || isNaN(Number(input.receivedAmount)))
+    ? (paymentMethod === 'cash' ? input.total : 0)
+    : Number(input.receivedAmount);
+  const remainingCreditDebt = Math.max(0, input.total - tender);
   return paymentMethod === 'credit' || remainingCreditDebt > 0;
 }
 
-// ── Helper: Calculate remaining credit debt ──
-function calcRemainingCreditDebt(total: number, receivedAmount?: number): number {
-  const received = receivedAmount ?? total;
-  return Math.max(0, total - received);
+/**
+ * Helper: Calculate remaining credit debt.
+ * Strictly guarantees that if tender === 0 for credit, dueBalance equals finalTotal.
+ *
+ * @param total - Total invoice amount
+ * @param receivedAmount - Optional tendered payment amount
+ * @returns Non-negative remaining credit balance
+ */
+function calcRemainingCreditDebt(total: number, receivedAmount?: number | string | null): number {
+  const tender = (receivedAmount === '' || receivedAmount === null || receivedAmount === undefined || isNaN(Number(receivedAmount)))
+    ? 0
+    : Number(receivedAmount);
+  return Math.max(0, total - tender);
 }
 
 // ── Helper: Apply credit transaction and update customer loan balance ──
@@ -728,22 +745,21 @@ export class InvoiceService {
     // ── STRICT STATUS RESOLUTION: Math-Driven Invoice Integrity ──
     // Status is NEVER derived from user input or payment method alone.
     // It is calculated exclusively from the financial comparison between
-    // totalAmount and receivedAmount, enforcing strict billing rules:
-    //   - CREDIT method or received < total   → status = 'pending'
-    //   - received >= total                    → status = 'paid'
+    // totalAmount and tender:
+    //   - If dueBalance > 0 → status = 'pending'
+    //   - If dueBalance <= 0 → status = 'paid'
+    //   - If tender === 0 for Credit → dueBalance strictly equals totalAmount
     const totalAmount = parseFloat(String(input.total || 0));
-    const receivedAmountValue = parseFloat(String(input.receivedAmount || 0));
     const paymentMethod = (input.paymentMethod || 'cash').toLowerCase();
+    const tender = (input.receivedAmount === null || input.receivedAmount === undefined || isNaN(Number(input.receivedAmount)))
+      ? (paymentMethod === 'cash' ? totalAmount : 0)
+      : Number(input.receivedAmount);
 
-    let calculatedStatus: string;
-    if (paymentMethod === 'credit' || receivedAmountValue < totalAmount) {
-      calculatedStatus = 'pending'; // Partial payments or short collections are strictly pending debts
-    } else if (receivedAmountValue >= totalAmount) {
-      calculatedStatus = 'paid'; // Fully cleared collection
-    } else {
-      calculatedStatus = 'pending';
-    }
-    const status = calculatedStatus;
+    const dueBalance = paymentMethod === 'credit'
+      ? Math.max(0, totalAmount - tender)
+      : Math.max(0, totalAmount - (input.receivedAmount !== undefined ? tender : totalAmount));
+
+    const status = dueBalance > 0 ? 'pending' : 'paid';
 
     // ══════════════════════════════════════════════════════════════════
     // CUSTOMER INTEGRITY SHIELD — validate incoming customerId
@@ -807,7 +823,9 @@ export class InvoiceService {
           taxRate: input.taxRate ?? null,
           tax: input.tax ?? 0,
           total: input.total,
-          receivedAmount: input.receivedAmount ?? null,
+          receivedAmount: (input.receivedAmount !== undefined && input.receivedAmount !== null)
+            ? Number(input.receivedAmount)
+            : (paymentMethod === 'credit' ? 0 : null),
           changeAmount: input.changeAmount ?? null,
           issueDate,
           dueDate,
@@ -868,6 +886,11 @@ export class InvoiceService {
           description: `Invoice ${invoiceNumber} — Credit/debt of LKR ${remainingCreditDebt.toFixed(2)} (Total: ${Number(input.total).toFixed(2)}, Received: ${Number(input.receivedAmount ?? 0).toFixed(2)})`,
           now,
         });
+      }
+
+      // Dynamically aggregate and persist live customer due balance from pending invoices
+      if (safeCustomerId && safeCustomerId !== 'default-customer' && safeCustomerId !== 'walk-in') {
+        await CustomerService.recalculateCustomerDueBalance(safeCustomerId, tx);
       }
 
       // 4. Fetch the complete invoice with relations
@@ -1084,20 +1107,20 @@ export class InvoiceService {
           updateData.paymentMethod = mapPaymentMethodToDb(input.paymentMethod);
         }
         // ── STRICT STATUS RESOLUTION: Math-Driven Invoice Status ──
-        // Status is NEVER taken from user input. It is calculated exclusively
-        // from the financial comparison between total and receivedAmount.
+        // Status is calculated exclusively from the financial comparison between
+        // total and tender. When remaining due balance is cleared (dueBalance <= 0),
+        // status is strictly 'paid'. If dueBalance > 0, status is strictly 'pending'.
         const statusTotal = parseFloat(String(input.total !== undefined ? input.total : existingInvoice.total));
-        const statusReceived = parseFloat(String(input.receivedAmount !== undefined ? input.receivedAmount : (existingInvoice.receivedAmount ?? 0)));
+        const rawReceived = input.receivedAmount !== undefined
+          ? input.receivedAmount
+          : (existingInvoice.receivedAmount !== null ? Number(existingInvoice.receivedAmount) : undefined);
+        const statusTender = (rawReceived === null || rawReceived === undefined || isNaN(Number(rawReceived)))
+          ? 0
+          : Number(rawReceived);
         const statusPaymentMethod = (input.paymentMethod || existingInvoice.paymentMethod || 'cash').toLowerCase();
 
-        let calculatedStatus: string;
-        if (statusPaymentMethod === 'credit' || statusReceived < statusTotal) {
-          calculatedStatus = 'pending'; // Partial payments or short collections are strictly pending debts
-        } else if (statusReceived >= statusTotal) {
-          calculatedStatus = 'paid'; // Fully cleared collection
-        } else {
-          calculatedStatus = 'pending';
-        }
+        const statusDueBalance = Math.max(0, statusTotal - (statusPaymentMethod === 'cash' && rawReceived === undefined ? statusTotal : statusTender));
+        const calculatedStatus = statusDueBalance > 0 ? 'pending' : 'paid';
         updateData.status = mapInvoiceStatusToDb(calculatedStatus);
 
         // ── Synchronize cashierName on update ──
@@ -1123,6 +1146,14 @@ export class InvoiceService {
           // instead of crashing the foreign key / data integrity constraint.
           const alignedItems = await alignProductIds(tx, input.items);
           await syncInvoiceItems(tx, dbId, alignedItems);
+        }
+
+        // Dynamically aggregate and persist live customer due balance
+        if (newCustomerIdNorm && newCustomerIdNorm !== 'default-customer' && newCustomerIdNorm !== 'walk-in') {
+          await CustomerService.recalculateCustomerDueBalance(newCustomerIdNorm, tx);
+        }
+        if (oldCustomerIdNorm && oldCustomerIdNorm !== newCustomerIdNorm && oldCustomerIdNorm !== 'default-customer' && oldCustomerIdNorm !== 'walk-in') {
+          await CustomerService.recalculateCustomerDueBalance(oldCustomerIdNorm, tx);
         }
 
         // ── STEP 5: Fetch the complete updated invoice ──
@@ -1196,6 +1227,11 @@ export class InvoiceService {
 
       // Delete the invoice; the schema cascade removes child invoice items.
       await tx.invoice.delete({ where: { id: dbId } });
+
+      // Dynamically aggregate and persist live customer due balance from remaining pending invoices
+      if (resolved.customerId && resolved.customerId !== 'default-customer' && resolved.customerId !== 'walk-in') {
+        await CustomerService.recalculateCustomerDueBalance(resolved.customerId, tx);
+      }
     });
   }
 
@@ -1233,24 +1269,21 @@ export class InvoiceService {
     }
 
     // ── STRICT STATUS RESOLUTION: Math-Driven Invoice Status ──
-    // Status is NEVER derived from user input. It is calculated exclusively
-    // from the financial comparison between total and receivedAmount.
+    // When remaining due balance is cleared (dueBalance <= 0), status is immediately 'paid'.
+    // If dueBalance > 0, status is strictly 'pending'.
     const patchTotal = input.total !== undefined
       ? parseFloat(String(input.total))
       : Number(resolved.total);
-    const patchReceived = input.receivedAmount !== undefined
-      ? parseFloat(String(input.receivedAmount))
-      : (resolved.receivedAmount !== null ? Number(resolved.receivedAmount) : 0);
+    const rawPatchReceived = input.receivedAmount !== undefined
+      ? input.receivedAmount
+      : (resolved.receivedAmount !== null ? Number(resolved.receivedAmount) : undefined);
+    const patchTender = (rawPatchReceived === null || rawPatchReceived === undefined || String(rawPatchReceived).trim() === '' || isNaN(Number(rawPatchReceived)))
+      ? 0
+      : Number(rawPatchReceived);
     const patchMethod = (input.paymentMethod || resolved.paymentMethod || 'cash').toLowerCase();
 
-    let patchCalculatedStatus: string;
-    if (patchMethod === 'credit' || patchReceived < patchTotal) {
-      patchCalculatedStatus = 'pending';
-    } else if (patchReceived >= patchTotal) {
-      patchCalculatedStatus = 'paid';
-    } else {
-      patchCalculatedStatus = 'pending';
-    }
+    const patchDueBalance = Math.max(0, patchTotal - (patchMethod === 'cash' && rawPatchReceived === undefined ? patchTotal : patchTender));
+    const patchCalculatedStatus = patchDueBalance > 0 ? 'pending' : 'paid';
     updateData.status = mapInvoiceStatusToDb(patchCalculatedStatus);
 
     // If customerId is being patched, synchronize denormalized customerName
@@ -1273,6 +1306,107 @@ export class InvoiceService {
       },
     });
 
+    // Dynamically aggregate and persist live customer due balance from pending invoices
+    if (updated.customerId && updated.customerId !== 'default-customer' && updated.customerId !== 'walk-in') {
+      await CustomerService.recalculateCustomerDueBalance(updated.customerId);
+    }
+    if (resolved.customerId && resolved.customerId !== updated.customerId && resolved.customerId !== 'default-customer' && resolved.customerId !== 'walk-in') {
+      await CustomerService.recalculateCustomerDueBalance(resolved.customerId);
+    }
+
     return toInvoiceDTO(updated);
+  }
+
+  /**
+   * Settle pending invoice payments for a customer (FIFO or designated invoice IDs)
+   * and dynamically aggregate & persist live customer due balance.
+   */
+  static async settle(params: {
+    customerId: string;
+    invoiceIds?: string[];
+    amount: number;
+    paymentMethod?: string;
+    notes?: string;
+  }): Promise<{
+    settledInvoices: InvoiceDTO[];
+    customerDueBalance: number;
+    allocatedAmount: number;
+  }> {
+    const { customerId, invoiceIds, amount, paymentMethod = 'cash' } = params;
+    const now = colomboNow();
+
+    if (!customerId) throw new AppError('customerId is required for settlement', 400);
+    if (!amount || amount <= 0) throw new AppError('Settlement amount must be greater than 0', 400);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const where: any = {
+        customerId,
+        status: { notIn: ['paid', 'cancelled'] },
+      };
+      if (invoiceIds && invoiceIds.length > 0) {
+        where.id = { in: invoiceIds };
+      }
+
+      const pendingInvoices = await tx.invoice.findMany({
+        where,
+        orderBy: { issueDate: 'asc' }, // FIFO
+        include: invoiceInclude,
+      });
+
+      let remainingToAllocate = amount;
+      const updatedInvoices: any[] = [];
+
+      for (const inv of pendingInvoices) {
+        if (remainingToAllocate <= 0) break;
+
+        const currentPaid = parseFloat(String(inv.receivedAmount || 0));
+        const total = parseFloat(String(inv.total || 0));
+        const invoiceDue = Math.max(0, total - currentPaid);
+        if (invoiceDue <= 0) continue;
+
+        const payThis = Math.min(invoiceDue, remainingToAllocate);
+        const newReceived = currentPaid + payThis;
+        const newRemainingDue = Math.max(0, total - newReceived);
+        const newStatus = newRemainingDue <= 0 ? 'paid' : 'pending';
+
+        const updatedInv = await tx.invoice.update({
+          where: { id: inv.id },
+          data: {
+            receivedAmount: newReceived,
+            status: mapInvoiceStatusToDb(newStatus) as any,
+            updatedAt: now,
+          },
+          include: invoiceInclude,
+        });
+
+        // Record credit transaction audit log
+        await tx.creditTransaction.create({
+          data: {
+            customerId,
+            invoiceId: inv.id,
+            type: 'payment_received',
+            amount: -payThis,
+            prevBalance: total - currentPaid,
+            newBalance: newRemainingDue,
+            description: `Settlement for Invoice ${inv.invoiceNumber} — payment of LKR ${payThis.toFixed(2)} (${paymentMethod})`,
+            createdAt: now,
+          },
+        });
+
+        remainingToAllocate -= payThis;
+        updatedInvoices.push(updatedInv);
+      }
+
+      // Persist the live recalculated due balance on the Customer document
+      const newDue = await CustomerService.recalculateCustomerDueBalance(customerId, tx);
+
+      return {
+        settledInvoices: updatedInvoices.map(toInvoiceDTO),
+        customerDueBalance: newDue,
+        allocatedAmount: amount - remainingToAllocate,
+      };
+    });
+
+    return result;
   }
 }

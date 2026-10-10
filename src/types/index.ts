@@ -83,6 +83,7 @@ export interface CustomerDTO {
   address?: string;
   customerType: 'regular' | 'wholesale' | 'credit';
   loanBalance: number;
+  dueBalance?: number;
   creditLimit?: number;
 }
 

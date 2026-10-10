@@ -19,4 +19,7 @@ router.put('/:id', CustomerController.update);
 // DELETE /api/customers/:id — delete customer
 router.delete('/:id', CustomerController.delete);
 
+// POST /api/customers/:id/recalculate-due — trigger dynamic due balance aggregation & sync
+router.post('/:id/recalculate-due', CustomerController.recalculateDue);
+
 export default router;

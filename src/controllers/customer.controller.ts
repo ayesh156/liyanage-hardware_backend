@@ -85,4 +85,20 @@ export const CustomerController = {
       message: 'Customer deleted successfully',
     });
   }),
+
+  /**
+   * POST /api/customers/:id/recalculate-due
+   * Recalculates and persists customer live due balance dynamically from all pending invoices.
+   */
+  recalculateDue: catchAsync(async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const dueBalance = await CustomerService.recalculateCustomerDueBalance(id);
+    const customer = await CustomerService.getById(id);
+    res.status(200).json({
+      success: true,
+      data: customer,
+      dueBalance,
+      message: 'Customer due balance recalculated and synchronized successfully',
+    });
+  }),
 };

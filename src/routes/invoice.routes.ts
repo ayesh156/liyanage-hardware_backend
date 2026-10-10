@@ -20,6 +20,9 @@ const router = Router();
 // ── Next Invoice Number (must be BEFORE /:id to avoid route collision) ──
 router.get('/next-number', authMiddleware, InvoiceController.getNextNumber);
 
+// ── Settle Invoices (must be BEFORE /:id to avoid collision) ──
+router.post('/settle', authMiddleware, InvoiceController.settle);
+
 // ── List / Create ──
 router.get('/', InvoiceController.list);
 router.post('/', authMiddleware, InvoiceController.create);

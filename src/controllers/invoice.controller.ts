@@ -139,4 +139,19 @@ export const InvoiceController = {
       message: 'Invoice deleted successfully',
     });
   }),
+
+  /**
+   * POST /api/invoices/settle
+   * Centralized endpoint for settling customer pending invoices with FIFO allocation.
+   * Mutates status to 'paid' when remainingDue <= 0, and triggers dynamic aggregation
+   * to synchronize and persist the customer's true due balance.
+   */
+  settle: catchAsync(async (req: Request, res: Response) => {
+    const result = await InvoiceService.settle(req.body);
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: 'Invoice payments settled and customer due balance synchronized successfully',
+    });
+  }),
 };
