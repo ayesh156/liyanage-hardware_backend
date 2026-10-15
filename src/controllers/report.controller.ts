@@ -27,6 +27,7 @@ export const ReportController = {
       data: reportData,
       summary: reportData.summary,
       transactions: reportData.transactions,
+      breakdown: reportData.breakdown,
       message: 'Financial report aggregated successfully',
     });
   }),
