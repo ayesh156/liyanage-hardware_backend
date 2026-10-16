@@ -120,14 +120,30 @@ app.use(
 );
 
 // 🛡️ API Rate Limiter (DDoS & Database Connection Exhaustion Shield)
-const apiRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200,                  // Limit each IP to 200 requests per window
+const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' }
+  message: {
+    error: 'Too many login attempts. Please try again later.'
+  }
 });
 
+const apiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests, please try again later.'
+  }
+});
+
+// Login endpoint gets its own stricter limit
+app.use('/api/auth/login', loginRateLimiter);
+
+// Other API requests use the higher general limit
 app.use('/api', apiRateLimiter);
 
 app.use((req, _res, next) => {
