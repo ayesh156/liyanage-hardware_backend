@@ -637,10 +637,21 @@ export class InvoiceService {
       where.paymentMethod = mapPaymentMethodToDb(paymentMethod);
     }
 
-    if (dateFrom || dateTo) {
-      where.issueDate = {};
-      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
-      if (dateTo) where.issueDate.lte = new Date(dateTo);
+    // Strict Hard-Capped 14-Day Rolling Visibility Window
+    // Invoices older than (currentDate - 14 days) must never be loaded, listed, or displayed
+    const maxVisibilityCutoff = new Date();
+    maxVisibilityCutoff.setDate(maxVisibilityCutoff.getDate() - 14);
+    maxVisibilityCutoff.setHours(0, 0, 0, 0);
+
+    const effectiveDateFrom = dateFrom
+      ? (new Date(dateFrom) < maxVisibilityCutoff ? maxVisibilityCutoff : new Date(dateFrom))
+      : maxVisibilityCutoff;
+
+    where.issueDate = {
+      gte: effectiveDateFrom,
+    };
+    if (dateTo) {
+      where.issueDate.lte = new Date(dateTo);
     }
 
     // Validate sort field
