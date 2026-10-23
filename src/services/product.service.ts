@@ -605,7 +605,12 @@ export class ProductService {
     if (enriched.searchKey !== undefined) updateData.searchKey = enriched.searchKey;
     if (enriched.name !== undefined) updateData.name = enriched.name;
     if (enriched.nameSi !== undefined) updateData.nameSi = enriched.nameSi;
-    if (enriched.nameSinhala !== undefined) updateData.nameSinhala = enriched.nameSinhala;
+    if (enriched.nameSinhala !== undefined) {
+      updateData.nameSinhala = enriched.nameSinhala;
+      if (enriched.nameSi === undefined) updateData.nameSi = enriched.nameSinhala;
+    } else if (enriched.nameSi !== undefined) {
+      updateData.nameSinhala = enriched.nameSi;
+    }
     if (enriched.productCategory !== undefined) updateData.productCategory = enriched.productCategory;
     if (enriched.categoryId !== undefined) updateData.categoryId = enriched.categoryId;
     if (enriched.categorySi !== undefined) updateData.categorySi = enriched.categorySi;

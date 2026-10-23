@@ -27,6 +27,7 @@ function normalizeProductBody(req: Request, _res: Response, next: NextFunction):
 	if (body.productCategory === undefined && body.category !== undefined) body.productCategory = body.category;
 	if (body.categorySi === undefined && body.categorySinhala !== undefined) body.categorySi = body.categorySinhala;
 	if (body.nameSinhala === undefined && body.nameSi !== undefined) body.nameSinhala = body.nameSi;
+	if (body.nameSi === undefined && body.nameSinhala !== undefined) body.nameSi = body.nameSinhala;
 
 	// Treat empty strings as nullable for optional localization fields.
 	body.nameSinhala = normalizeNullableString(body.nameSinhala);
